@@ -1,0 +1,10 @@
+build/
+*.core
+harness/results/
+harness/control/
+emulator/runtime*/
+gamedata/
+.local-donor/
+__pycache__/
+.DS_Store
+._*
