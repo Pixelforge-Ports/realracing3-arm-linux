@@ -66,7 +66,80 @@ if [ -f "$GAMEDIR/cover.png" ] && [ ! -e "$_rr3_img_dir/Real Racing 3.png" ]; th
   cp "$GAMEDIR/cover.png" "$_rr3_img_dir/Real Racing 3.png" 2>/dev/null \
     && echo "Artwork installed to ports/images/Real Racing 3.png"
 fi
-unset _rr3_img_dir
+
+# ...and point the frontend's own index at it.
+#
+# Dropping the file in images/ is only half of it: EmulationStation reads
+# ports/gamelist.xml, and PortMaster is what normally writes our <image> there
+# from gameinfo.xml at install time. That merge is skipped, silently and
+# without a log line, whenever harbourmaster does not recognise the OS name -
+# any fork or re-release lands on PlatformBase, whose gamelist_file() returns
+# None, and gamelist_backup() then yields None and returns. Nothing fails, no
+# port is broken, the artwork simply never arrives. Rather than depend on which
+# firmware the user runs, satisfy the convention ourselves.
+#
+# Deliberately conservative: never touch a gamelist that does not exist (muOS,
+# TrimUI and RetroDECK do not use one), never overwrite an <image> the user
+# already has, back up before writing, and only install the result if it still
+# parses as the same document plus our line.
+_rr3_gamelist="/$directory/ports/gamelist.xml"
+if [ -e "$_rr3_img_dir/Real Racing 3.png" ] && [ -s "$_rr3_gamelist" ]; then
+  _rr3_tmp="$GAMEDIR/.gamelist.$$"
+  if awk -v P="./Real Racing 3.sh" -v IMG="./images/Real Racing 3.png" \
+         -v NAME="Real Racing 3" '
+      { L[++n] = $0 }
+      END {
+        s = 0; found = 0; hasimg = 0; ins = 0; pad = "\t\t"
+        for (i = 1; i <= n; i++) {
+          if (L[i] ~ /<game>/) { s = i }
+          if (L[i] ~ /<\/game>/ && s > 0) {
+            hit = 0; img = 0; pl = 0
+            for (j = s; j <= i; j++) {
+              if (index(L[j], "<path>" P "</path>") > 0) { hit = 1; pl = j }
+              if (L[j] ~ /<image>/) { img = 1 }
+            }
+            if (hit == 1) { found = 1; hasimg = img; ins = pl }
+            s = 0
+          }
+        }
+        if (found == 1 && hasimg == 1) { exit 1 }
+        if (found == 1) {
+          match(L[ins], /^[ \t]*/)
+          pad = substr(L[ins], 1, RLENGTH)
+          for (i = 1; i <= n; i++) {
+            print L[i]
+            if (i == ins) { print pad "<image>" IMG "</image>" }
+          }
+          exit 0
+        }
+        done = 0
+        for (i = 1; i <= n; i++) {
+          if (L[i] ~ /<\/gameList>/ && done == 0) {
+            print "\t<game>"
+            print "\t\t<path>" P "</path>"
+            print "\t\t<name>" NAME "</name>"
+            print "\t\t<image>" IMG "</image>"
+            print "\t</game>"
+            done = 1
+          }
+          print L[i]
+        }
+        if (done == 0) { exit 1 }
+        exit 0
+      }' "$_rr3_gamelist" > "$_rr3_tmp" 2>/dev/null; then
+    # Only swap it in if the result is a sane, complete document.
+    if [ -s "$_rr3_tmp" ] \
+       && grep -q "</gameList>" "$_rr3_tmp" \
+       && grep -q "images/Real Racing 3.png" "$_rr3_tmp"; then
+      cp "$_rr3_gamelist" "$_rr3_gamelist.bak" 2>/dev/null
+      if cp "$_rr3_tmp" "$_rr3_gamelist" 2>/dev/null; then
+        echo "Artwork registered in ports/gamelist.xml"
+      fi
+    fi
+  fi
+  rm -f "$_rr3_tmp" 2>/dev/null
+fi
+unset _rr3_img_dir _rr3_gamelist _rr3_tmp
 
 : > "$GAMEDIR/log.txt"
 exec > "$GAMEDIR/log.txt" 2>&1
