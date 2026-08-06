@@ -82,15 +82,15 @@ if [ ! -d "$GAMEDIR" ]; then
     exit $REACHED
 fi
 
-# The sha1 the working Vita port pins. A different build has different function
+# The sha1 of the pinned 2.7.0 donor. A different build has different function
 # offsets, so every binary patch in the loader would land in the wrong place -
 # and the resulting crash would say nothing about why.
 SO_FILE="$GAMEDIR/lib/armeabi-v7a/libRealRacing3.so"
-EXPECT_SHA1="ea58b733d3d267ab639431b50539542faa43f0d0"
+EXPECT_SHA1="615c9aa4a92faaf9a0f34750e344e5e8a6b9aedf"
 if [ -f "$SO_FILE" ]; then
     GOT_SHA1=$(shasum -a 1 "$SO_FILE" 2>/dev/null | cut -d' ' -f1 | tr 'A-Z' 'a-z')
     if [ "$GOT_SHA1" != "$EXPECT_SHA1" ]; then
-        fail "wrong game build: sha1 $GOT_SHA1, expected $EXPECT_SHA1 (MEI v1.0.58)"
+        fail "wrong game build: sha1 $GOT_SHA1, expected $EXPECT_SHA1 (RR3 2.7.0)"
         echo "$REACHED" > "$RESULTS/milestone"
         exit $REACHED
     fi
