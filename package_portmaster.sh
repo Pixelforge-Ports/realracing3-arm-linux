@@ -95,7 +95,7 @@ unzip -tq "$OUT" >/dev/null
 # The packaged eapx must be the canonical one. An earlier port shipped 0.2.0
 # while the source tree was already at 0.4.1, because nobody compared them - the
 # copy in tools/ is easy to forget and impossible to notice from the outside.
-canonical="${EAPX_CANONICAL:-$HOME/Projects/Others/eapx/eapx.py}"
+canonical="${EAPX_CANONICAL:-$HOME/Projects/Others/handheld/eapx/eapx.py}"
 if [ -f "$canonical" ]; then
   if ! cmp -s tools/eapx.py "$canonical"; then
     echo "refusing package: tools/eapx.py differs from the canonical $canonical" >&2
