@@ -96,9 +96,9 @@ using PointerFn = void (__attribute__((pcs("aapcs"))) *)(
 using AccelFn = void (__attribute__((pcs("aapcs"))) *)(
     JNIEnv *, void *, float, float, float);
 /*
- * This is the com.ea.games.meinfiltrator_GAMEPAD build - the Xperia Play SKU -
- * and it does not read movement from the touchscreen. Analog sticks arrive
- * through a separate gamepad entry point that takes both sticks in one call:
+ * The loader's original donor build did not read movement from the
+ * touchscreen: analog sticks arrived through a separate gamepad entry point
+ * that takes both sticks in one call:
  *
  *   void NativeDispatchGenericMotionEvent(JNIEnv*, jobject,
  *                                         float lx, float ly,
@@ -106,15 +106,16 @@ using AccelFn = void (__attribute__((pcs("aapcs"))) *)(
  *
  * Same softfp/hardfp hazard as the pointer path, four times over: without
  * pcs("aapcs") the four floats go in s0-s3 and the callee reads r2-r5, so the
- * character would move on garbage. The Vita reference calls this same export.
+ * character would move on garbage. libRealRacing3.so exports no such entry
+ * point, so g_motion stays NULL here (see android_input_init).
  */
 using MotionFn = void (__attribute__((pcs("aapcs"))) *)(
     JNIEnv *, void *, float, float, float, float, int);
 
 /*
- * Real Racing 3's actual input surface. The com.ea.blast names above are the
- * sibling port's (Mass Effect) and exist nowhere in libRealRacing3.so; every
- * one of them resolves to NULL here. RR3 is a Firemint engine and its Java
+ * Real Racing 3's actual input surface. The com.ea.blast names above come
+ * from the loader's original scaffold and exist nowhere in libRealRacing3.so;
+ * every one of them resolves to NULL here. RR3 is a Firemint engine and its Java
  * layer calls these exports instead (signatures read from the decompiled
  * MainActivity/ControllerManager/Input classes, jadx over the 2.7.0 APK):
  *
@@ -196,17 +197,15 @@ static Uint8 g_accept_button = SDL_CONTROLLER_BUTTON_B;
 static Uint8 g_back_button = SDL_CONTROLLER_BUTTON_A;
 
 /*
- * The Xperia Play build uses accelerometer gestures for two actions that have
- * no ordinary key equivalent: tilting rotates/switches a weapon's fire mode,
- * and a sharp movement performs a Zero-G jump. R36S-class handhelds have no
- * motion sensor, so these replay the samples by hand - but only behind
- * REALRACING3_TRIGGER_ACCEL=1, since the triggers are worth more as fire and
- * cover buttons. See trigger_changed().
+ * The loader's original donor bound accelerometer gestures to actions with no
+ * ordinary key equivalent. R36S-class handhelds have no motion sensor, so
+ * these replay measured Android acceleration samples by hand - but only
+ * behind REALRACING3_TRIGGER_ACCEL=1, since the triggers are worth more as
+ * ordinary buttons. See trigger_changed().
  *
- * These are the measured Android acceleration samples used by realracing3-vita's
- * optional D-pad accelerometer replacement, split at its explicit "for zero g
- * jump" boundary. Preserve the short cadence: the game recognises a gesture,
- * not a single static vector.
+ * The samples come from the Vita reference loader's optional D-pad
+ * accelerometer replacement, split at its explicit gesture boundary. Preserve
+ * the short cadence: a game recognises a gesture, not a single static vector.
  */
 struct AccelSample {
     float x;
@@ -398,7 +397,7 @@ static void send_trigger(bool left, Sint16 value);
 static void trigger_changed(bool left, Sint16 value)
 {
     /* This binary's own path. The Android-key routing below belongs to the
-     * Dead Space / Mass Effect lineage, where a trigger had no axis to go to. */
+     * loader's earlier donors, where a trigger had no axis to go to. */
     if (g_rr3_joystick) {
         send_trigger(left, value);
         return;
@@ -547,51 +546,17 @@ static const int kAutopilotKeys[] = {
 };
 
 /*
- * Gameplay keys, read out of the binary rather than guessed.
+ * Gameplay keys, inherited from the loader's original scaffold, whose donor
+ * translated Android keycodes through per-device keyboard tables that
+ * intercepted several gamepad codes (DPAD_CENTER, BACK, BUTTON_X, BUTTON_Y)
+ * into values no handler read. The mapping below only uses codes that
+ * survived every table - two of them are letter keys, because the donor's
+ * base table sent keycodes 29-54 to ASCII 'a'-'z' - which keeps it correct
+ * whichever keyboard layer a donor installs.
  *
- * EA::Blast::KeyboardAndroid::RawToStdKey (+0x361ad0) turns an Android keycode
- * into the engine's own Key enum through a 165-entry table at +0x987430. The
- * gamepad range maps
- *
- *   BUTTON_A 96 -> 0xf026   BUTTON_X  99 -> 0xf029   BUTTON_L1 102 -> 0xf022
- *   BUTTON_B 97 -> 0xf027   BUTTON_Y 100 -> 0xf02a   BUTTON_R1 103 -> 0xf024
- *
- * and Hud::onKeyDown (+0x118bdc) switches on exactly those six values:
- *
- *   0xf026  Hud::TriggerNavAid()          (key-up: Morality::ChooseRenegade)
- *   0xf027  Playable::TryMelee() / Interactive - melee and context actions
- *   0xf029  Playable::tryCloak()          - tactical cloak
- *   0xf02a  Hud::TryFireBiotic()          - biotic power
- *   0xf022  Playable::TrySlide()          - slide into cover
- *   0xf024  FIRE. Sets the held-fire flag Hud+0x489, which Hud::OnUpdate
- *           consumes every frame; with a "weapon_sniper" tag it runs
- *           Playable::OnSniperEvent() instead, which is the scope. Key-up
- *           clears the flag, so this is a hold-to-shoot button.
- *
- * There is no separate aim key: 0xf023/0xf025 (BUTTON_L2/R2) and 0xf030-0xf031
- * (THUMBL/THUMBR) appear in no handler in the binary. Aiming is the right
- * stick; see dispatch_motion().
- *
- * The catch is that a second table sits in front of that one.
- * KeyboardAndroidXperiaPlay::RawToStdKey (+0x92ed90) intercepts exactly four
- * codes - DPAD_CENTER 23, BACK 4, BUTTON_X 99 and BUTTON_Y 100 - and turns them
- * into 0xf02c-0xf02f, which no handler in this binary reads; everything else
- * falls through to the base table. Keyboard::Create (+0x92daec) installs it when
- * the device reports manufacturer "sony" and name "R800", and this port reports
- * exactly that (jni/classes/ea_SystemAndroidDelegate.h), as does the Vita
- * reference. So those four codes are unusable here.
- *
- * That is the whole of the missing-combat-buttons report. A was sent as
- * DPAD_CENTER and B as BACK - two of the four the subclass swallows - and X and
- * Y were sent as BUTTON_X/BUTTON_Y, the other two. Every face button landed in
- * the dead range. The menus never noticed because they are driven by the
- * software cursor's pointer events, not by these keys.
- *
- * The mapping below therefore only uses codes the subclass lets through, which
- * also makes it correct whichever table ends up installed. Two of them are
- * letter keys: the base table sends keycodes 29-54 to ASCII 'a'-'z', and
- * Hud::onKeyDown gives 'b' and 'y' the same branches as 0xf029 and 0xf02a. The
- * Vita reference reaches cloak the same way, through AKEYCODE_B.
+ * Real Racing 3 does not go through those tables at all: when the binary
+ * exports MainActivity.onKeyPressed/onKeyReleased (g_rr3_key_down below),
+ * these codes are delivered there directly.
  */
 static int map_button(Uint8 button)
 {
@@ -726,8 +691,9 @@ static float normalise_axis(int16_t value, float deadzone, float maximum)
 /*
  * The gamepad entry point wants the raw normalised stick, not the virtual
  * touch radius, so it gets the reference's own curve rather than
- * normalise_axis(). Both deadzone pairs are realracing3-vita's defaults:
- * settings.c seeds 0.13/0.12 for the inner ones, controls.c defines the outer.
+ * normalise_axis(). Both deadzone pairs are masseffect-vita's defaults (see
+ * NOTICE.md): settings.c seeds 0.13/0.12 for the inner ones, controls.c
+ * defines the outer.
  */
 static const float kLeftInnerDeadzone  = 0.13f;
 static const float kLeftOuterDeadzone  = 0.992f;
@@ -846,7 +812,7 @@ static bool app_singleton_ready(void)
      * backtrace above. Real Racing 3 exports no such entry point (g_motion is
      * NULL here) and reaches the engine through ControllerManager instead,
      * where every call goes to an already-registered pad slot and constructs
-     * nothing. Waiting on a Mass Effect address in this binary only means the
+     * nothing. Waiting on a scaffold-donor address in this binary only means the
      * sticks are dead forever: text_base + 0xa98c48 is somebody else's data
      * here, it never gets bit 0 set, and the tutorial that asks for the left
      * stick can never be satisfied.
@@ -1039,9 +1005,9 @@ static void send_pointer(int raw_event, int module, int id, float x, float y)
  * trail on the Mali came from.
  *
  * The player reports the menus responding to the d-pad directly, which - if it
- * holds - makes the whole mechanism redundant. THAT IS NOT ESTABLISHED. This
- * build is `meinfiltrator_gamepad` and it does route face buttons through
- * KeyboardAndroidXperiaPlay, so d-pad navigation is plausible; but the menu
+ * holds - makes the whole mechanism redundant. THAT IS NOT ESTABLISHED. The
+ * loader's original donor did route face buttons through its device-specific
+ * keyboard layer, so d-pad navigation is plausible; but the menu
  * widgets may equally be listening for pointer events and nothing else, in
  * which case turning the cursor off leaves the menus unnavigable. This switch
  * is here so that question gets answered on the hardware in one run instead of
@@ -1315,9 +1281,9 @@ bool android_input_inject_stick(const char *name, float x, float y)
 static void update_sticks(void)
 {
     /*
-     * g_pointer and g_motion are the com.ea.blast / MassEffectActivity exports,
-     * and android_input_init() records that both resolve to NULL in this
-     * binary: Real Racing 3 takes axes through ControllerManager instead. Left
+     * g_pointer and g_motion are the scaffold's com.ea.blast exports, and
+     * android_input_init() records that both stay NULL in this binary: Real
+     * Racing 3 takes axes through ControllerManager instead. Left
      * as a two-symbol guard this returned before send_motion() could ever reach
      * g_rr3_joystick, so every stick deflection died here and the controller
      * tutorial ("Press the left analog stick left to steer left") could not be
@@ -1350,7 +1316,7 @@ static void update_sticks(void)
      * g_rr3_joystick joins g_motion here because dispatch_motion() never
      * touches g_motion itself - it only runs the move/stop state machine and
      * hands the result to send_motion(), which already prefers the Real Racing
-     * 3 per-axis ordinal path over the MassEffectActivity one.
+     * 3 per-axis ordinal path over the scaffold one.
      */
     if ((g_motion || g_rr3_joystick) && !g_stick_touch) {
         dispatch_motion();
@@ -1444,13 +1410,9 @@ void android_input_init(so_module *mod, JNIEnv *env, int width, int height)
         mod, "Java_com_ea_blast_TouchSurfaceAndroid_NativeOnPointerEvent");
     g_acceleration = (AccelFn)so_symbol(
         mod, "Java_com_ea_blast_AccelerometerAndroidDelegate_NativeOnAcceleration");
-    g_motion = (MotionFn)so_symbol(
-        mod,
-        "Java_com_ea_games_meinfiltrator_1gamepad_MassEffectActivity_"
-        "NativeDispatchGenericMotionEvent");
-
     /* Real Racing 3's own exports. These are the ones that actually exist in
-     * this binary; the com.ea.blast names above all resolve to NULL. */
+     * this binary; the com.ea.blast names above all resolve to NULL, and the
+     * scaffold's gamepad export (g_motion) is not looked up at all. */
     const char *kActivity = "Java_com_firemint_realracing3_MainActivity_";
     const char *kController = "Java_com_firemint_realracing3_ControllerManager_";
     char name[160];
@@ -1573,7 +1535,7 @@ void android_input_init(so_module *mod, JNIEnv *env, int width, int height)
     }
 
     /*
-     * +0xa98c48 is a Mass Effect Infiltrator address and only means anything
+     * +0xa98c48 is a scaffold-donor address and only means anything
      * when that binary's motion entry point is the one being fed. Installing it
      * unconditionally made the trace above print three fields of unrelated Real
      * Racing 3 data as if they were engine state, which is worse than printing
@@ -1589,7 +1551,7 @@ void android_input_init(so_module *mod, JNIEnv *env, int width, int height)
               g_motion_no_gate ? " gate=off" : "");
     } else if (g_rr3_joystick) {
         trace("input: analog sticks routed through "
-              "ControllerManager.SetJoystickValueJNI; the Mass Effect "
+              "ControllerManager.SetJoystickValueJNI; the scaffold's "
               "Application gate does not apply to this binary");
     } else {
         warning("input: no analog entry point resolved at all - neither "

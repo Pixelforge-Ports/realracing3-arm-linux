@@ -17,8 +17,8 @@
 #include "android_assets.h"
 
 /*
- * Why these classes exist at all, given src/patch.cpp already switched the
- * engine off the JNI I/O path.
+ * Why these classes exist at all, given the scaffold's binary patches already
+ * switched the engine off the JNI I/O path.
  *
  * Those three patches make the "appbundle:" prefix test fail, which sends the
  * *content* reads down open()/fopen() - and that works today, the log shows

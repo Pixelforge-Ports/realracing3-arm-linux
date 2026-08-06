@@ -32,9 +32,10 @@ CXXFLAGS := -std=gnu++20 $(OPT) $(WARN) -fno-strict-aliasing -fuse-cxa-atexit
 LDFLAGS  := $(OPT)
 LDLIBS   := $(shell $(PKG_CONFIG) --libs $(PKGS)) -pthread -lm -ldl -lrt -lbsd
 
-# Keep the active bootstrap intentionally small. The directory began as a
-# Mass Effect loader scaffold; files that have not yet been validated for RR3
-# remain available as reference but are not linked merely because they exist.
+# Keep the active bootstrap intentionally small. The directory began as the
+# loader scaffold from an earlier port; files that have not yet been validated
+# for RR3 remain available as reference but are not linked merely because they
+# exist.
 SRCS := \
   src/atc_decompress.cpp src/crash.cpp src/dxt_decompress.cpp src/gl_diag.cpp \
   src/gl_stats.cpp \
