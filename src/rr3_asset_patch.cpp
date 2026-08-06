@@ -113,8 +113,8 @@ void rr3_apply_asset_patches(so_module *mod)
 {
     /* By symbol, not by offset: libRealRacing3.so keeps a .dynsym (it has no
      * .symtab, but every one of these is exported), so there is no need to
-     * trust a hard-coded address the way src/patch.cpp's inherited Mass Effect
-     * table did - and no way for the hook to land mid-function on a donor that
+     * trust a hard-coded address the way the scaffold's inherited patch table
+     * did - and no way for the hook to land mid-function on a donor that
      * turns out to be a different build. */
     static const char kSkipAsset[] = "_ZN20AssetDownloadService13SkipAssetImplEPKc";
 
@@ -123,7 +123,8 @@ void rr3_apply_asset_patches(so_module *mod)
     /* AssetDownloadService is ARM, not Thumb (the whole Cloudcell range
      * 0x9298b0-0x962400 is Thumb, this is well below it), so the low bit must
      * be clear. If it is not, the donor is not the build these notes describe
-     * and hooking blind is exactly the failure mode src/patch.cpp warns about. */
+     * and hooking blind is exactly the failure mode the scaffold's hard-coded
+     * patch table warned about. */
     if (!target || (target & 1)) {
         trace("asset patch: %s not found or not ARM - download accounting "
               "left alone", kSkipAsset);

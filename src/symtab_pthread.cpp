@@ -249,7 +249,7 @@ static void delay_late_thread(void)
      * single thread that matters is what REALRACING3_LATE_THREAD_AT is for, and 0
      * turns it off to re-measure.
      */
-    /* RR3 has not demonstrated the Mass Effect startup race this scaffold
+    /* RR3 has not demonstrated the startup race the scaffold's original donor
      * once worked around. Opt in only while diagnosing a measured race. */
     int ms = env ? atoi(env) : 0;
     if (ms <= 0)

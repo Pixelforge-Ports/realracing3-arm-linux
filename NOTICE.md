@@ -20,8 +20,7 @@ tool were created by **EapRules**.
 | `thunks/khronos/` | glad generator, Khronos headers | MIT / Apache-2.0 |
 | `third_party/powervr/PVRTDecompress.*` | [PowerVR SDK](https://github.com/powervr-graphics/Native_SDK) by Imagination Technologies | MIT |
 | `third_party/stb/stb_truetype.h` — glyph rasteriser behind `GlyphVector` | [stb](https://github.com/nothings/stb) v1.26 by **Sean Barrett** | MIT (upstream offers MIT or public domain) |
-| `src/vfp_vector_patch.cpp` register decoding/scalar emission | adapted from VFPVector by **Bythos14** | MIT |
-| accelerometer gesture samples in `android/input_bridge.cpp` | adapted from [realracing3-vita](https://github.com/v-atamanenko/realracing3-vita) by **v-atamanenko** | MIT |
+| accelerometer gesture samples in `android/input_bridge.cpp` | adapted from [masseffect-vita](https://github.com/v-atamanenko/masseffect-vita) by **v-atamanenko** | MIT |
 | `tools/eapx.py` — transactional first-boot donor extractor | written by **EapRules** | GPL-3.0 |
 | `android/`, `jni/classes/xt_*`, `src/`, `harness/`, `ports/` | written for this port | GPL-3.0 |
 
@@ -47,8 +46,8 @@ repository will relicense to match — open an issue and it will be corrected.
 ## What is *not* in here
 
 No game code, assets, or data from Real Racing 3 are distributed by this project.
-The supported binary is EA/IronMonkey's v1.0.58 gamepad build; you supply your
-own copy. The port loads it at runtime and circumvents no protection.
+The supported binary is Firemint/Firemonkeys' Real Racing 3 2.7.0 Android
+build; you supply your own copy. The port loads it at runtime and circumvents no protection.
 
 The 4:3 screenshot under `ports/realracing3/` was captured from the user's own
 copy through this loader. The 4:3 cover is a composition

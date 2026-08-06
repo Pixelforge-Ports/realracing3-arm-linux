@@ -438,9 +438,9 @@ load_module_success:
             needed = std::string(mod->dynstr + mod->dynamic[j].d_un.d_val);
             /*
              * Some EA builds of this era record a DT_NEEDED as the full path
-             * of the NDK sysroot on the build machine:
+             * of the NDK sysroot on the build machine, e.g.:
              *
-             *   D:/EAMT/realracing3infiltrator_eamt/Packages/.../android-ndk-r7/
+             *   D:/.../android-ndk-r7/
              *     platforms/android-9/arch-arm/usr/lib/libc.so
              *
              * Bionic's loader resolves needed libraries by basename, so this

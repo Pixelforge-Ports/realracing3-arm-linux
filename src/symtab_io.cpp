@@ -5,8 +5,8 @@
  * ---------------------------------------------------------------------------
  * What was observed
  *
- * With com/ea/games/Util registered (see jni/classes/ea_games_Util.cpp) the
- * engine finally gets past its content gate and starts loading. Under
+ * With the donor's com/ea/games/Util class registered, the engine finally
+ * gets past its content gate and starts loading. Under
  * `qemu-arm -strace` the very first thing it does is:
  *
  *     openat(AT_FDCWD,"appbundle:/EAMCore.ini",O_RDONLY) = -1 ENOENT
@@ -15,7 +15,7 @@
  * That is a literal Android URI reaching the host kernel. Two things are worth
  * naming about it:
  *
- *   - it is proof the three binary patches in src/patch.cpp do what they claim.
+ *   - it is proof the scaffold's three binary patches do what they claim.
  *     Before them this path went out through JNI to AssetManager.open(); the
  *     open() syscall above is the fd path they switch the engine onto, and it
  *     is the reason those patches were kept even though they moved no

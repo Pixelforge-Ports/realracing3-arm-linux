@@ -59,7 +59,6 @@ cp LICENSE   "$STAGE/realracing3/licenses/LICENSE-portmaster-port.txt"
 cp NOTICE.md "$STAGE/realracing3/licenses/NOTICE.md"
 cp third_party/gmloader/LICENSE.md "$STAGE/realracing3/licenses/LICENSE-gmloader.md"
 cp third_party/powervr/LICENSE.md  "$STAGE/realracing3/licenses/LICENSE-powervr.txt"
-cp third_party/vfpvector/LICENSE   "$STAGE/realracing3/licenses/LICENSE-vfpvector.txt"
 # stb_truetype is not a bundled .so, so collect_libs.sh never sees it - but it is
 # compiled into the loader and therefore redistributed as object code, and its
 # MIT alternative requires the notice to travel with the binary.
@@ -93,9 +92,9 @@ ACTUAL_SIGNATURE="$(unzip -p "$OUT" "Real Racing 3.sh" | sed -n '2p')"
 }
 unzip -tq "$OUT" >/dev/null
 
-# The packaged eapx must be the canonical one. Dead Space shipped 0.2.0 while
-# the source tree was already at 0.4.1, because nobody compared them - the copy
-# in tools/ is easy to forget and impossible to notice from the outside.
+# The packaged eapx must be the canonical one. An earlier port shipped 0.2.0
+# while the source tree was already at 0.4.1, because nobody compared them - the
+# copy in tools/ is easy to forget and impossible to notice from the outside.
 canonical="${EAPX_CANONICAL:-$HOME/Projects/Others/eapx/eapx.py}"
 if [ -f "$canonical" ]; then
   if ! cmp -s tools/eapx.py "$canonical"; then
