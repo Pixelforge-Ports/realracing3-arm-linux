@@ -530,10 +530,27 @@ static void trace_path(const char *what, const char *orig, const char *fixed, in
  * configuration. The path has already passed through fix_path(), so the
  * extracted asset tree is the stable boundary regardless of which spelling
  * the engine used (appbundle:, Android/data/... or its VFS mount).
+ *
+ * The boundary is the game directory itself. An earlier spelling of this
+ * looked for "/assets/published/", which is the layout of the port this file
+ * was seeded from and a directory Real Racing 3's tree does not contain: the
+ * counter read zero for every run ever made, and read like a measurement while
+ * doing it. Everything the engine loads lives directly under the game dir
+ * (audio/, gui/, Tracks/, vehicles/, materials/, Shaders/, ...); saves and
+ * configuration resolve to io_writable_dir(), which is elsewhere and so is
+ * excluded by construction rather than by a list that would need maintaining.
  */
 static void count_asset_open(const char *fixed, bool succeeded)
 {
-    if (succeeded && fixed && strstr(fixed, "/assets/published/"))
+    if (!succeeded || !fixed)
+        return;
+
+    const char *root = io_game_dir();
+    if (!root || !*root)
+        return;
+
+    size_t len = strlen(root);
+    if (strncmp(fixed, root, len) == 0 && fixed[len] == '/')
         g_assets_opened.fetch_add(1, std::memory_order_relaxed);
 }
 

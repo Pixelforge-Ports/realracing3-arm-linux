@@ -534,16 +534,42 @@ static int  g_counted_key_serial = 0;
 
 static void update_sticks(void);
 
-static const int kAutopilotKeys[] = {
-    AKEYCODE_DPAD_CENTER,
-    AKEYCODE_DPAD_DOWN,
-    AKEYCODE_DPAD_CENTER,
-    AKEYCODE_BUTTON_START,
-    AKEYCODE_BACK,
-    AKEYCODE_DPAD_RIGHT,
-    AKEYCODE_DPAD_CENTER,
-    AKEYCODE_DPAD_UP,
+/*
+ * What the autopilot presses.
+ *
+ * The scaffold this file came from injected Android keycodes here, and that is
+ * the right answer for a game whose menus read the d-pad. It is the wrong one
+ * for this game twice over: com.ea.blast's NativeOnKeyDown/Up never resolve in
+ * this binary (the bridge trace says "JNI keys=no"), so the key path was a
+ * no-op that still counted itself; and even with keys the menus would not
+ * answer, because Real Racing 3's menus are touch-only - the same fact that
+ * made this port grow a software cursor in the first place.
+ *
+ * So the autopilot taps. Positions are fractions of the surface, aimed at
+ * where this game's boot flow puts something pressable: EA's splash and the
+ * loading screens dismiss on a tap anywhere, and the menus that follow put
+ * their confirm affordance low and to the right. The list is a cycle rather
+ * than a script - nothing here knows which screen is up, and a fixed script
+ * that assumed one would silently stop meaning anything the first time the
+ * boot flow changed.
+ */
+struct AutopilotTap {
+    float x, y;
+    const char *where;
 };
+
+static const AutopilotTap kAutopilotTaps[] = {
+    {0.50f, 0.50f, "centre"},
+    {0.85f, 0.88f, "bottom right"},
+    {0.50f, 0.75f, "lower centre"},
+    {0.50f, 0.50f, "centre"},
+    {0.70f, 0.60f, "right of centre"},
+    {0.15f, 0.90f, "bottom left"},
+};
+
+/* Its own pointer id, so a synthetic tap can never be mistaken for - or
+ * cancel - a gesture the cursor or the aim path has in flight. */
+static const int kAutopilotPointerId = 5;
 
 /*
  * Gameplay keys, inherited from the loader's original scaffold, whose donor
@@ -1748,38 +1774,70 @@ bool android_input_event(const SDL_Event *event)
     return true;
 }
 
+/*
+ * Frame-based, deliberately, not wall-clock. This runs at ~2 fps under qemu
+ * and at ~12 on the console, and a cadence in milliseconds would inject
+ * hundreds of taps in the emulator's first "second" of game time and a handful
+ * on hardware. Counting frames means the same run happens either way, however
+ * long it takes; REALRACING3_TIME_SCALE does not change it either.
+ */
 void android_input_autopilot_tick(long frame)
 {
-    if (!g_autopilot || !g_key_down || !g_key_up)
+    if (!g_autopilot || !g_rr3_touch_begin)
         return;
 
-    const long first = 90;
+    const long first = 60;
     const long period = 45;
     if (frame < first)
         return;
 
     long phase = (frame - first) % period;
     long index = (frame - first) / period;
-    int code = kAutopilotKeys[index %
-        (sizeof(kAutopilotKeys) / sizeof(kAutopilotKeys[0]))];
+    const AutopilotTap &tap = kAutopilotTaps[index %
+        (sizeof(kAutopilotTaps) / sizeof(kAutopilotTaps[0]))];
 
+    float x = tap.x * (float)g_width;
+    float y = tap.y * (float)g_height;
+
+    /* Down and up three frames apart. One frame was enough for the engine to
+     * see both events, but not for it to see them as a press: the touch has to
+     * survive at least one of the game's own input polls, and at this frame
+     * rate three frames is the cheapest margin that always does. */
     if (phase == 0) {
-        send_key(code, true);
+        send_pointer(ID_RAW_POINTER_DOWN, MODULE_TOUCH_SCREEN,
+                     kAutopilotPointerId, x, y);
         g_auto_keys++;
         g_pending_key_frame = frame;
         g_pending_key_serial++;
-        trace("autopilot: key down %d at frame %ld", code, frame);
+        trace("autopilot: tap %ld down at %.0f,%.0f (%s) at frame %ld",
+              g_auto_keys, x, y, tap.where, frame);
     } else if (phase == 3) {
-        send_key(code, false);
+        send_pointer(ID_RAW_POINTER_UP, MODULE_TOUCH_SCREEN,
+                     kAutopilotPointerId, x, y);
     }
 }
 
 /*
- * A compact perceptual signature: 32 horizontal buckets over the middle row,
- * RGB averaged in each. It is deliberately coarser than a pixel hash so menu
- * animation and tiny cursor movement do not become fake scene transitions.
+ * A compact perceptual signature: 32 horizontal buckets across each of five
+ * rows spread down the screen, RGB averaged in each bucket. Deliberately
+ * coarser than a pixel hash, so menu animation and tiny cursor movement do not
+ * become fake scene transitions.
+ *
+ * Five rows rather than the one the scaffold sampled. Reading only the middle
+ * row was measurably not enough here: through a whole 360-frame run this game
+ * reported a delta of exactly zero on that row for 250 consecutive frames
+ * while the log showed it loading vehicle after vehicle and its draw count
+ * climbing past six thousand. A single row through the centre of a loading
+ * screen is the one part of it that holds still - the progress bar, the
+ * spinner and the text all live somewhere else. Five rows still cost five
+ * single-row reads every fifteenth frame, which is nothing next to the frame
+ * they are read from.
  */
-static bool sample_signature(unsigned char signature[32 * 3])
+static const int kSignatureRows = 5;
+static const int kSignatureBuckets = 32;
+static const size_t kSignatureSize = kSignatureRows * kSignatureBuckets * 3;
+
+static bool sample_signature(unsigned char *signature)
 {
     using ReadPixels = void (*)(int, int, int, int, unsigned int, unsigned int,
                                 void *);
@@ -1799,22 +1857,28 @@ static bool sample_signature(unsigned char signature[32 * 3])
         row_size = need;
     }
 
-    read_pixels(0, g_height / 2, g_width, 1, 0x1908 /* GL_RGBA */,
-                0x1401 /* GL_UNSIGNED_BYTE */, row);
+    for (int r = 0; r < kSignatureRows; r++) {
+        /* Evenly spaced, both edges left out: row 0 and row height-1 are where
+         * a letterbox bar or a black border would sit and never change. */
+        int y = (int)((long)g_height * (r + 1) / (kSignatureRows + 1));
+        read_pixels(0, y, g_width, 1, 0x1908 /* GL_RGBA */,
+                    0x1401 /* GL_UNSIGNED_BYTE */, row);
 
-    for (int bucket = 0; bucket < 32; bucket++) {
-        int begin = bucket * g_width / 32;
-        int end = (bucket + 1) * g_width / 32;
-        unsigned int sum[3] = {};
-        for (int x = begin; x < end; x++) {
-            sum[0] += row[x * 4 + 0];
-            sum[1] += row[x * 4 + 1];
-            sum[2] += row[x * 4 + 2];
+        unsigned char *out = signature + (size_t)r * kSignatureBuckets * 3;
+        for (int bucket = 0; bucket < kSignatureBuckets; bucket++) {
+            int begin = bucket * g_width / kSignatureBuckets;
+            int end = (bucket + 1) * g_width / kSignatureBuckets;
+            unsigned int sum[3] = {};
+            for (int x = begin; x < end; x++) {
+                sum[0] += row[x * 4 + 0];
+                sum[1] += row[x * 4 + 1];
+                sum[2] += row[x * 4 + 2];
+            }
+            int pixels = std::max(1, end - begin);
+            out[bucket * 3 + 0] = (unsigned char)(sum[0] / pixels);
+            out[bucket * 3 + 1] = (unsigned char)(sum[1] / pixels);
+            out[bucket * 3 + 2] = (unsigned char)(sum[2] / pixels);
         }
-        int pixels = std::max(1, end - begin);
-        signature[bucket * 3 + 0] = (unsigned char)(sum[0] / pixels);
-        signature[bucket * 3 + 1] = (unsigned char)(sum[1] / pixels);
-        signature[bucket * 3 + 2] = (unsigned char)(sum[2] / pixels);
     }
     return true;
 }
@@ -1824,12 +1888,12 @@ void android_input_autopilot_sample(long frame)
     if (!g_autopilot || frame % 15 != 0)
         return;
 
-    static unsigned char latest[32 * 3] = {};
-    static unsigned char baseline[32 * 3] = {};
+    static unsigned char latest[kSignatureSize] = {};
+    static unsigned char baseline[kSignatureSize] = {};
     static bool have_latest = false;
     static int baseline_serial = 0;
 
-    unsigned char current[32 * 3];
+    unsigned char current[kSignatureSize];
     if (!sample_signature(current))
         return;
 
@@ -1838,20 +1902,33 @@ void android_input_autopilot_sample(long frame)
         baseline_serial = g_pending_key_serial;
     }
 
+    long from_baseline = 0, from_previous = 0;
+    for (size_t i = 0; i < kSignatureSize; i++) {
+        from_baseline += abs((int)current[i] - (int)baseline[i]);
+        from_previous += abs((int)current[i] - (int)latest[i]);
+    }
+    from_baseline /= (long)kSignatureSize;
+    from_previous /= (long)kSignatureSize;
+
+    /* DIAGNOSTIC: every sample, not only the ones that count. When this
+     * milestone fails there are two very different reasons - the screen never
+     * changed, or it changed outside the window this looks in - and the
+     * scene-change line alone cannot tell them apart. 24 lines per 360 frames. */
+    if (have_latest)
+        trace("autopilot: sample at frame %ld: delta from previous=%ld, "
+              "from tap %d baseline=%ld", frame, from_previous,
+              baseline_serial, from_baseline);
+
     if (baseline_serial != 0 &&
         baseline_serial != g_counted_key_serial &&
         frame >= g_pending_key_frame + 10 &&
         frame <= g_pending_key_frame + 44) {
-        long difference = 0;
-        for (size_t i = 0; i < sizeof(current); i++)
-            difference += abs((int)current[i] - (int)baseline[i]);
-        long average = difference / (long)sizeof(current);
-        if (average >= 18) {
+        if (from_baseline >= 18) {
             g_auto_scenes++;
             g_counted_key_serial = baseline_serial;
-            trace("autopilot: scene change %ld after key %d "
+            trace("autopilot: scene change %ld after tap %d "
                   "(mean strip delta=%ld)",
-                  g_auto_scenes, baseline_serial, average);
+                  g_auto_scenes, baseline_serial, from_baseline);
         }
     }
 

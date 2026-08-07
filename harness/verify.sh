@@ -132,7 +132,10 @@ RUN_LOG="$RESULTS/02-run.log"
 # --- M2: every import resolved. An unresolved symbol means a missing shim,
 #         which is the single most common failure mode for this kind of port.
 #         Real Racing 3 declares 393 of them, 190 of which are gl*.
-if grep -q "TRACE: module loaded" "$RUN_LOG"; then
+#         This loader announces the load as "module relocated: <name>" (the
+#         sibling ports say "module loaded"); the old marker was inherited and
+#         could never match, hidden until the donor sha1 pin was fixed.
+if grep -q "TRACE: module relocated" "$RUN_LOG"; then
     UNRESOLVED=$(grep -c "unresolved symbol" "$RUN_LOG" || true)
     if [ "$UNRESOLVED" -eq 0 ]; then
         REACHED=2; log "M2 ok (0 unresolved symbols)"
@@ -144,33 +147,31 @@ else
     fail "M2: module never loaded"
 fi
 
-# --- M3: the JNI handshake. Both calls have to *return*, not merely be made:
-#         JNI_OnLoad walks the fake class registry and a missing class shows up
-#         as a hang or a fault inside it, never as a diagnostic.
+# --- M3: the JNI handshake. The call has to *return*, not merely be made.
+#         This game has no NativeActivity and no JNI_OnLoad: its Java layer
+#         drives the engine through MainActivity.onCreateJNI, and the loader
+#         brackets it with -> / <- traces. A missing class in the fake registry
+#         shows up as a hang or a fault inside it, never as a diagnostic.
 if [ $REACHED -ge 2 ]; then
-    if grep -q "TRACE: JNI_OnLoad returned" "$RUN_LOG" \
-       && grep -q "TRACE: NativeOnCreate returned" "$RUN_LOG"; then
+    if grep -q "TRACE: <- MainActivity.onCreateJNI" "$RUN_LOG"; then
         REACHED=3; log "M3 ok"
     else
-        grep -q "TRACE: JNI_OnLoad returned" "$RUN_LOG" \
-            || fail "M3: JNI_OnLoad did not return (missing class in the fake registry?)"
-        grep -q "TRACE: NativeOnCreate returned" "$RUN_LOG" \
-            || fail "M3: NativeOnCreate did not return"
+        fail "M3: MainActivity.onCreateJNI did not return (missing class in the fake registry?)"
         grep -iE "no class|no method|no field|jni" "$RUN_LOG" | sort -u | head -10
     fi
 fi
 
-# --- M4: a live GLES 1.1 context the engine accepted.
+# --- M4: a live GL surface the engine accepted.
 #
-# Not GLES2. The game imports 190 fixed-function entry points and zero shader
-# ones; a GLES2-only context resolves glMatrixMode to null and the first
-# NativeOnDrawFrame jumps to address 0.
+# Real Racing 3 is mixed-pipeline: it imports the GLES1 fixed-function table
+# AND compiles GLES2 shaders (hundreds of them once the menus load). The
+# loader announces the accepted surface as "GLES2 surface ready: WxH".
 if [ $REACHED -ge 3 ]; then
-    if grep -q "TRACE: surface created" "$RUN_LOG"; then
+    if grep -q "TRACE: GLES2 surface ready" "$RUN_LOG"; then
         REACHED=4; log "M4 ok"
     else
-        fail "M4: NativeOnSurfaceCreated never returned - no usable GLES 1.1 context"
-        grep -iE "GL_VERSION|GL_RENDERER|egl error|glGetError|GLESv1" "$RUN_LOG" | head -10
+        fail "M4: no GL surface accepted by the engine"
+        grep -iE "GL_VERSION|GL_RENDERER|egl error|glGetError|GLESv" "$RUN_LOG" | head -10
     fi
 fi
 
@@ -194,10 +195,10 @@ fi
 # assets. A solid-colour clear is indistinguishable from a rendered game by the
 # pixel test alone.
 #
-# One threshold changes for this game. An earlier check counted linked GLSL programs as
-# the proof that materials were real; Real Racing 3 has no shaders at all, so the
-# fixed-function equivalent is texture uploads - glTexImage2D is where a
-# material stops being a filename and becomes something the GPU holds.
+# The material proof here is texture uploads - glTexImage2D is where a
+# material stops being a filename and becomes something the GPU holds. (This
+# game also compiles hundreds of GLES2 shaders, visible in the GL stats trace,
+# but textures are the signal both of its pipelines share.)
 #
 # The loader must emit, at the end of the run:
 #   TRACE: summary assets=<n> textures=<n> draws=<n>
@@ -248,6 +249,17 @@ fi
 # and injects synthetic keys, hashes a strip of the framebuffer every N frames,
 # and reports each time the scene actually changed:
 #   TRACE: autopilot keys=<n> scenes=<n>
+#
+# Bar for this port (owner's decision, 2026-08-06): M6 is the automated release
+# gate; M7 is answered by playing on the real device, where a human advancing
+# the menus beats a synthetic tap script. A 6/7 run with M7 short is therefore
+# a PASS for release purposes - M7 stays here as free extra signal, not a gate.
+#
+# Why it falls short at the default budget: this game needs ~410 frames /
+# ~4 minutes under qemu to reach its menu (EA splash -> one transition ->
+# ~250 frames of static loading screen while the garage builds offscreen).
+# Only one on-screen transition fits in 120 s. TIMEOUT=400 reaches 7/7 when
+# the full signal is wanted; measured 2026-08-06.
 MIN_SCENES="${MIN_SCENES:-2}"
 
 if [ $REACHED -ge 6 ]; then

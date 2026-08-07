@@ -38,7 +38,7 @@ LDLIBS   := $(shell $(PKG_CONFIG) --libs $(PKGS)) -pthread -lm -ldl -lrt -lbsd
 # exist.
 SRCS := \
   src/atc_decompress.cpp src/crash.cpp src/dxt_decompress.cpp src/gl_diag.cpp \
-  src/gl_stats.cpp \
+  src/gl_probe.cpp src/gl_stats.cpp src/sdl_info.cpp \
   src/main.cpp src/symtab.cpp src/symtab_bionic.cpp src/symtab_gl_stubs.cpp \
   src/symtab_glprobe.cpp src/symtab_io.cpp src/symtab_libm.cpp \
   src/symtab_net.cpp src/symtab_off.cpp src/symtab_pthread.cpp \
@@ -47,7 +47,7 @@ SRCS := \
   src/symtab_zlib.cpp src/rr3_control.cpp src/rr3_asset_patch.cpp src/rr3_savefile_patch.cpp \
   src/rr3_control_scheme.cpp src/rr3_texture_guard.cpp src/rr3_tutorial_trace.cpp \
   src/rr3_fmod_pump.cpp \
-  android/asset_manager.cpp android/egl_shim.cpp android/fb_probe.cpp \
+  android/app_exit.cpp android/asset_manager.cpp android/egl_shim.cpp android/fb_probe.cpp \
   android/log.cpp android/opensles.cpp android/platform.cpp android/input_bridge.cpp \
   $(wildcard loader/*.cpp) $(wildcard thunks/libc/*.cpp) \
   $(wildcard thunks/khronos/*.cpp) jni/class_registry.cpp jni/jni.cpp \

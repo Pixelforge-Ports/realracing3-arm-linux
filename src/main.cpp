@@ -23,8 +23,12 @@
 #include "classes/rr3_MainActivity.h"
 #include "classes/cloudcell_defer.h"
 
+#include "app_exit.h"
 #include "crash.h"
 #include "fix_path.h"
+#include "gl_probe.h"
+#include "port_version.h"
+#include "sdl_info.h"
 #include "trace.h"
 #include "rr3_asset_patch.h"
 #include "rr3_control_scheme.h"
@@ -35,6 +39,7 @@
 #include "rr3_control.h"
 #include "input_bridge.h"
 #include "gl_stats.h"
+#include "fb_probe.h"
 
 /*
  * The OpenSL buffer queue's fallback tick.
@@ -83,6 +88,13 @@ static void frame_budget_account(uint32_t render_ms, uint32_t swap_ms,
 
 extern "C" long android_gl_draw_calls(void);
 extern "C" long android_gl_textures_uploaded(void);
+/* The two ways a file becomes content here: through the libc thunks
+ * (src/symtab_io.cpp, which is how this game reads almost everything) and
+ * through AAssetManager (android/asset_manager.cpp, the APK path). Summed
+ * rather than picked - "how many assets did the run open" has no useful answer
+ * that leaves one of them out. */
+extern "C" long android_io_assets_opened(void);
+extern "C" long android_assets_opened(void);
 extern "C" int android_gl_shaders_compiled(void);
 extern "C" int android_gl_shaders_failed(void);
 extern "C" int android_gl_programs_linked(void);
@@ -162,6 +174,78 @@ extern "C" int so_after_relocate(so_module *mod)
     return 0;
 }
 
+/*
+ * Everything worth knowing about a failed window or context, in one place.
+ *
+ * "Can't load EGL/GL library on window creation" is the only thing SDL says,
+ * and it says it for two unrelated causes: the EGL library could not be
+ * dlopen()ed at all, or it loaded and its initialisation failed. A field log
+ * carrying just that sentence cannot be acted on.
+ *
+ * This port makes those failures fatal - without a context it has nothing to
+ * render into - so the forensics run on the way out, which is also the only
+ * place they cost nothing: a successful boot prints none of this.
+ *
+ * What is printed is the state SDL decided from: which video driver is live,
+ * which ones were compiled in, the four environment variables that steer the
+ * GL search as the process actually sees them, then the EGL library SDL would
+ * have used, walked step by step and audited for missing dependencies.
+ */
+static void trace_probe_line(void *ctx, const char *line)
+{
+    (void)ctx;
+    trace("  %s", line);
+}
+
+static void log_window_failure_forensics(const char *stage)
+{
+    trace("window failure forensics (%s)", stage);
+    trace("  SDL_GetError: %s", SDL_GetError());
+
+    const char *current = SDL_GetCurrentVideoDriver();
+    trace("  current video driver: %s", current ? current : "(none initialised)");
+
+    char drivers[256];
+    size_t used = 0;
+    int count = SDL_GetNumVideoDrivers();
+    for (int i = 0; i < count && used + 1 < sizeof(drivers); i++) {
+        const char *name = SDL_GetVideoDriver(i);
+        int written = snprintf(drivers + used, sizeof(drivers) - used, "%s%s",
+                               used ? " " : "", name ? name : "?");
+        if (written < 0)
+            break;
+        used += (size_t)written;
+    }
+    trace("  compiled-in video drivers (%d): %s", count, used ? drivers : "(none)");
+
+    /*
+     * As the process sees them, not as the launcher set them: an unset variable
+     * here and a set one there is the difference between "SDL never looked at
+     * our shim" and "it looked and the shim is wrong".
+     */
+    static const char *const kGlEnv[] = {
+        "SDL_VIDEO_EGL_DRIVER", "SDL_VIDEO_GL_DRIVER",
+        "SDL_VIDEODRIVER", "LD_LIBRARY_PATH",
+    };
+    for (size_t i = 0; i < sizeof(kGlEnv) / sizeof(kGlEnv[0]); i++) {
+        const char *value = getenv(kGlEnv[i]);
+        trace("  %s=%s", kGlEnv[i], value ? value : "(unset)");
+    }
+
+    /*
+     * SDL's own default when SDL_VIDEO_EGL_DRIVER is unset. Walking it here,
+     * in the process that just failed and with the linker state SDL used, is
+     * what separates a dlopen-level failure from an EGL-init-level one - and
+     * the dependency audit turns "something is missing" into the list.
+     */
+    const char *egl = getenv("SDL_VIDEO_EGL_DRIVER");
+    if (!egl || !*egl)
+        egl = "libEGL.so.1";
+
+    gl_probe_init(egl, trace_probe_line, NULL);
+    gl_probe_deps(egl, trace_probe_line, NULL);
+}
+
 template <typename T>
 static T required_symbol(so_module *mod, const char *name)
 {
@@ -175,6 +259,39 @@ int main(int argc, char **argv)
 {
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stderr, NULL, _IONBF, 0);
+
+    /*
+     * The launcher's GL provider preflight, before anything that expects a
+     * game directory: these modes load one library and exit.
+     */
+    if (argc >= 2 && strcmp(argv[1], "--gl-probe") == 0)
+        return gl_probe_main(argc - 2, argv + 2);
+    if (argc >= 3 && strcmp(argv[1], "--gl-probe-init") == 0)
+        return gl_probe_init(argv[2], gl_probe_report_stdout, NULL);
+    if (argc >= 3 && strcmp(argv[1], "--gl-probe-deps") == 0)
+        return gl_probe_deps(argv[2], gl_probe_report_stdout, NULL);
+
+    /*
+     * The same idea one layer up: the launcher has to pick a video backend for
+     * SDL, and only SDL knows which ones it was built with. No SDL_Init here -
+     * see src/sdl_info.h.
+     */
+    if (argc >= 2 && strcmp(argv[1], "--sdl-info") == 0)
+        return sdl_info_main();
+
+    /*
+     * The launcher asks the binary for the version rather than carrying its own
+     * copy, so the two can never disagree. Plain stdout, not trace(): the caller
+     * is a shell substitution, and it runs before LOADER_TRACE means anything.
+     */
+    if (argc >= 2 && strcmp(argv[1], "--version") == 0) {
+        printf("%s\n", REALRACING3_PORT_VERSION);
+        return 0;
+    }
+
+    /* First line of every run: a log that does not name its build cannot be
+     * told apart from a log produced by the release before it. */
+    trace("Real Racing 3 port v%s", REALRACING3_PORT_VERSION);
 
     if (argc < 2) {
         fprintf(stderr,
@@ -222,6 +339,10 @@ int main(int argc, char **argv)
 
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER | SDL_INIT_AUDIO) != 0) {
         fatal("SDL_Init failed: %s", SDL_GetError());
+        /* Naming a backend SDL was not built with is one of the two ways to get
+         * here, and the launcher can set SDL_VIDEODRIVER. The driver list and
+         * the env block say immediately which of the two this is. */
+        log_window_failure_forensics("SDL_Init");
         return 1;
     }
 
@@ -237,12 +358,14 @@ int main(int argc, char **argv)
         kWidth, kHeight, SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN);
     if (!window) {
         fatal("SDL_CreateWindow failed: %s", SDL_GetError());
+        log_window_failure_forensics("GLES 2.0 window");
         return 1;
     }
 
     SDL_GLContext gl = SDL_GL_CreateContext(window);
     if (!gl) {
         fatal("could not create an OpenGL ES 2.0 context: %s", SDL_GetError());
+        log_window_failure_forensics("GLES 2.0 context");
         return 1;
     }
 
@@ -377,9 +500,26 @@ int main(int argc, char **argv)
         if (!running)
             break;
 
+        /*
+         * The game's own exit request, checked next to the event drain rather
+         * than trusted to it: android_app_request_exit() pushes SDL_QUIT, but
+         * a full queue drops it, and a dropped exit is the freeze all over
+         * again. Read before the render call, so the frame after finish() is
+         * never issued against a world the engine has already released.
+         */
+        if (android_app_exit_requested()) {
+            running = false;
+            break;
+        }
+
         /* Deliver held MCP/controller sticks once per game frame, matching
          * the Android poll cadence used by the native input bridge. */
         android_input_tick();
+
+        /* Synthetic input, only under REALRACING3_AUTOPILOT. Injected here
+         * rather than after the render so the tap is in the engine's queue
+         * before the frame that would act on it. */
+        android_input_autopilot_tick(frames);
 
         /* Answer everything the Cloudcell facades queued last frame, from the
          * game thread and outside every Cloudcell lock. Before the render call,
@@ -409,6 +549,26 @@ int main(int argc, char **argv)
             trace("<- MainActivity.onViewRenderJNI #%ld returned", frames + 1);
         }
         const uint32_t t_after_render = SDL_GetTicks();
+
+        /*
+         * Both of these read the back buffer, so they have to run before the
+         * swap: after it the contents are undefined.
+         *
+         * The probe was already wired into android/egl_shim.cpp's
+         * eglSwapBuffers, and that call site never fired once - this game
+         * presents through the loader's own SDL swap and never calls
+         * eglSwapBuffers at all, so "TRACE: framebuffer non-black" had never
+         * appeared in a run log. The probe stops reading as soon as it has
+         * seen a drawn frame, so the cost is paid only while the answer is
+         * still "black". The autopilot sampler is its own kind of cheap: one
+         * row, every fifteenth frame, and only under the env var.
+         */
+        {
+            int fb_w = 0, fb_h = 0;
+            SDL_GL_GetDrawableSize(window, &fb_w, &fb_h);
+            android_fb_probe(frames + 1, fb_w, fb_h);
+        }
+        android_input_autopilot_sample(frames + 1);
 
         trace("-> SDL_GL_SwapWindow #%ld", frames + 1);
         SDL_GL_SwapWindow(window);
@@ -447,6 +607,22 @@ int main(int argc, char **argv)
     }
 
     trace("run finished: %ld frame(s)", frames);
+    /*
+     * The run in three numbers, printed unconditionally at the end.
+     *
+     * "It survived N frames" is the claim a port can make while doing nothing:
+     * a loop calling into an engine that draws a cleared screen ticks its
+     * counter just as happily as one running a game. Assets opened, textures
+     * uploaded and draws issued are the three that cannot be faked by
+     * surviving - they only move when the engine is loading its own content
+     * and putting it on the GPU. The harness reads this line for M6.
+     */
+    trace("summary assets=%ld textures=%ld draws=%ld",
+          android_io_assets_opened() + android_assets_opened(),
+          android_gl_textures_uploaded(), android_gl_draw_calls());
+    /* Zeroes unless REALRACING3_AUTOPILOT drove the run; M7 reads this. */
+    trace("autopilot keys=%ld scenes=%ld",
+          android_input_autopilot_keys(), android_input_autopilot_scenes());
     rr3_report_asset_patch_stats();
     /* Both of these were written and then never called, so their counters were
      * only ever visible to a debugger. They are the two "how bad was it"

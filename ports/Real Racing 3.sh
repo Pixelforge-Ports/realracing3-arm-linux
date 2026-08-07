@@ -144,6 +144,68 @@ unset _rr3_img_dir _rr3_gamelist _rr3_tmp
 : > "$GAMEDIR/log.txt"
 exec > "$GAMEDIR/log.txt" 2>&1
 
+# A zip extracted onto exFAT/FAT32 loses the executable bit. This used to sit
+# just before the game was launched; it has to happen here instead, because the
+# version query below and the GL preflight further down both run the binary.
+$ESUDO chmod +x "$GAMEDIR/realracing3" 2>/dev/null
+
+# Which build produced this log. A user reporting a problem is running whatever
+# is on their SD card, not necessarily the release they just downloaded, and a
+# log that does not name its build cannot be told apart from one produced by the
+# release before it. The string lives in the binary (src/port_version.h) and is
+# asked for here, so a launcher and a loader can never claim different versions.
+#
+# The bundled libraries are not on LD_LIBRARY_PATH yet (that export happens
+# further down); without them the binary cannot link and the answer comes back
+# empty - on the sibling port a real device printed "vunknown" for exactly this.
+# The path rides along just for this one call.
+PORT_VERSION=$(LD_LIBRARY_PATH="$GAMEDIR/libs.armhf${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+    "$GAMEDIR/realracing3" --version 2>/dev/null) || PORT_VERSION=""
+echo "Real Racing 3 port v${PORT_VERSION:-unknown} launcher starting"
+
+# The machine, in every log, whether or not anything goes wrong.
+#
+# Each line below was asked for by hand in a bug report at least once. Asking
+# costs days of round trips with a user who is on a different continent and a
+# different firmware, and the answers do not change between runs - so they are
+# collected unconditionally. The whole block is a dozen lines and prefixed
+# "sys:" so it greps out of the log cleanly.
+#
+# GL_DIRS is defined here rather than beside the provider search below because
+# the survey lists them; the search is what explains them.
+GL_DIRS="/usr/lib/arm-linux-gnueabihf /usr/lib/arm-linux-gnueabihf/mali \
+/lib/arm-linux-gnueabihf /usr/lib32/mali /usr/lib32"
+if [ "$DEVICE_ARCH" = "armhf" ]; then
+  GL_DIRS="$GL_DIRS /usr/lib /lib"
+fi
+
+echo "sys: uname: $(uname -rm 2>/dev/null)"
+_sys_os=$(sed -n 's/^PRETTY_NAME="\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' /etc/os-release 2>/dev/null | head -n 1)
+[ -n "$_sys_os" ] || _sys_os=$(cat /etc/*-release 2>/dev/null | head -n 1)
+echo "sys: os: ${_sys_os:-unknown}"
+echo "sys: cfw: ${CFW_NAME:-unknown} device: ${DEVICE_NAME:-unknown} arch: ${DEVICE_ARCH:-unknown}"
+# What GL the firmware actually ships, seen rather than asked about. Filtered to
+# the sonames that decide whether this port can run: an unfiltered listing of a
+# multiarch library directory is hundreds of names and would bury the block it
+# belongs to.
+for _sys_gldir in $GL_DIRS; do
+  [ -d "$_sys_gldir" ] || continue
+  _sys_gl=$(ls "$_sys_gldir" 2>/dev/null \
+      | grep -E '^lib(EGL|GLESv1_CM|GLESv2|mali|Mali|GLdispatch|gbm\.|drm\.)' \
+      | tr '\n' ' ')
+  echo "sys: gl $_sys_gldir: ${_sys_gl:-(no GL libraries)}"
+done
+# Permissions included on purpose: a render node the user cannot open fails the
+# same way a missing driver does.
+_sys_dri=$(ls -la /dev/dri 2>/dev/null | sed 1d \
+    | awk 'NF>=9 {print $NF" ("$1" "$3":"$4")"}' | tr '\n' ' ')
+echo "sys: dri: ${_sys_dri:-none}"
+_sys_mem=$(free -m 2>/dev/null | sed -n '2p' | tr -s ' ')
+[ -n "$_sys_mem" ] || _sys_mem=$(grep -E '^Mem(Total|Available)' /proc/meminfo 2>/dev/null | tr -s ' \n' ' ')
+echo "sys: mem: ${_sys_mem:-unknown}"
+_sys_sdl=$(ls "$GAMEDIR"/libs.armhf/libSDL2*.so* 2>/dev/null | xargs -n1 basename 2>/dev/null | tr '\n' ' ')
+echo "sys: sdl bundled: ${_sys_sdl:-none}"
+
 # CFWs do not ship libzip/libbsd/libmd/libcrypto and their libstdc++ may
 # predate the toolchain's; the port bundles the exact set it was linked
 # against (tools/collect_libs.sh, see libs.armhf/MANIFEST.txt).
@@ -308,57 +370,377 @@ if [ -n "$GAME_SIZE" ] && [ "$GAME_SIZE" != "$EXPECTED_SIZE" ]; then
   echo "Warning: libRealRacing3.so size=$GAME_SIZE expected=$EXPECTED_SIZE (2.7.0); continuing"
 fi
 
-# SDL must create its context through the 32-bit Mali blob, and the loader's
-# GLES1 table (thunks/khronos/gles1.cpp) dlopen()s "libmali.so.1" by name. On
-# the console the blob is installed as libmali-bifrost-g31-rxp0-gbm.so and no
-# libmali.so.1 exists anywhere on the linker path, so without this shim that
+# SDL must create its context through the device's own 32-bit GL stack, and the
+# loader's GLES1 table (thunks/khronos/gles1.cpp) dlopen()s "libmali.so.1" by
+# name. On the console the blob is installed as libmali-bifrost-g31-rxp0-gbm.so
+# and no libmali.so.1 exists anywhere on the linker path, so without a shim that
 # table stays empty and src/symtab_glprobe.cpp silently drops every glClear,
-# glDrawArrays, glDrawElements and glTexImage2D it wraps: a black screen with
-# no error at all. Build the symlinks in /tmp because the SD card may be exFAT
-# and cannot hold symlinks. Try the exact R36S filename first, then any Mali
-# build in the standard 32-bit library directories, so other Mali handhelds
-# work without naming their SoC here.
+# glDrawArrays, glDrawElements and glTexImage2D it wraps. Build the symlinks in
+# /tmp because the SD card may be exFAT and cannot hold symlinks.
+#
+# Which stack that is depends on the device, not on the firmware's name, so it
+# is found by capability:
+#
+#   1. A unified Mali blob under one of the exact tested filenames - one .so
+#      exporting EGL, GLESv1_CM and GLESv2. Known-good and therefore first.
+#   2. A split Mali wrapper set - a directory holding both libEGL.so and
+#      libGLESv2.so, the layout a Batocera-derived firmware installs. SDL is
+#      pointed straight at those two files (SDL_VIDEO_EGL_DRIVER /
+#      SDL_VIDEO_GL_DRIVER) rather than being left to find a blob.
+#   3. Any other Mali blob in the 32-bit library directories, because every
+#      distribution names it differently: versioned upstream names on
+#      Debian-style CFWs (libmali-bifrost-g31-*.so), an unversioned libmali.so.1
+#      on Buildroot ones, libMali.so where a firmware symlinks it.
+#   4. No Mali anything, but a real 32-bit EGL/GLES set - a Mesa/glvnd userland,
+#      which is what a Panfrost-only device ships and what the build container
+#      has, so it is the tier the harness exercises on every run.
+#   5. None of those. Say so on screen instead of leaving the user with a black
+#      panel: without a 32-bit provider SDL either falls back to something that
+#      never reaches the framebuffer, or fails to create a window at all.
+#
+# Why the wrapper set sits between the two blob tiers, and not elsewhere:
+#
+#   - It must come after tier 1 so that every device already working keeps
+#     working unchanged. A Debian-style CFW that ships the tested blob usually
+#     also ships unversioned libEGL.so/libGLESv2.so symlinks beside it; if the
+#     wrapper tier ran first it would win there and change a happy path for no
+#     reason. Tier 1 matches three literal filenames, so it is cheap to keep in
+#     front.
+#   - It must come before tier 3, and that is the whole fix. A Knulli device has
+#     /usr/lib32/libmali.so.0 next to the wrapper set: the old glob picks the
+#     blob, the preflight can even pass on it, and SDL still dies in
+#     SDL_CreateWindow. The wrapper set is the stack that firmware actually
+#     supports, so it has to be asked for first. A Knulli Gladiator user got
+#     this port running by hand-editing exactly those two variables plus
+#     SDL_VIDEODRIVER=mali into the launcher.
+#
+# The discriminator for tier 2 is the *unversioned* pair libEGL.so +
+# libGLESv2.so, present together in one directory. A runtime Mesa/glvnd rootfs
+# ships only the versioned sonames (libEGL.so.1, libGLESv2.so.2); the
+# unversioned names are how the split Mali wrapper installs itself. Matching on
+# them keeps tier 4 for Mesa, where it belongs.
+#
+# The directories searched are GL_DIRS, set with the system survey at the top of
+# this script. They are architecture-scoped, so a 64-bit library can never be
+# picked: the multiarch triplet dir and lib32 are 32-bit by definition, and the
+# bare /usr/lib and /lib are only consulted on a pure-armhf rootfs.
+#
+# A candidate that exists is not a driver that works. On a 64-bit userland the
+# 32-bit directories can hold an orphaned blob whose own dependencies were never
+# installed: /usr/lib32/libmali.so.0 was picked on a muOS device running the
+# sibling port, SDL answered "Can't load EGL/GL library on window creation", and
+# every GL import resolved to nil. Existence was checked; loadability was not.
+#
+# So every candidate is dlopen()ed before it is committed to. The probe is the
+# port's own binary (--gl-probe): it is 32-bit, it is already here, and it loads
+# the library the same way SDL will, in the same runtime linker and the same
+# LD_LIBRARY_PATH. ldd would have been simpler and would have been wrong on
+# exactly the devices this is for - it execs the host's interpreter list, so on
+# a 64-bit rootfs it reports an armhf .so as "not a dynamic executable".
+#
+# A probe that cannot run at all is not a verdict: the candidate is accepted
+# unchecked, which is the behaviour before this check existed.
+#
+# Acceptance is logged as well as rejection. Silence on the happy path would
+# make a passing preflight indistinguishable from a release without one.
+GL_PROBE_REASON=""
+GL_REJECTED=""
+GL_FIRST_REASON=""
+#
+# The symbol the candidate must resolve is a parameter because the tiers below
+# ask three different questions of three different kinds of library: does this
+# provide EGL (eglGetDisplay), does it provide GLES 2 (glGetString), does it
+# provide fixed function (glMatrixMode - not because this game calls fixed
+# function, it calls none, but because that is the symbol gl_provider_open() in
+# thunks/khronos/gles1.cpp tests before adopting a library for the GLES1 table).
+# A library rejected for one symbol may be the right answer for another, so the
+# rejection cache is keyed by both.
+gl_provider_loadable() {
+  local _out _rc _sym
+  _sym="${2:-eglGetDisplay}"
+  GL_PROBE_REASON=""
+  case " $GL_REJECTED " in
+    *" $1@$_sym "*) GL_PROBE_REASON="already rejected"; return 1 ;;
+  esac
+  _out=$("$GAMEDIR/realracing3" --gl-probe "$1" "$_sym" 2>&1)
+  _rc=$?
+  if [ "$_rc" = 0 ]; then
+    echo "GL: preflight ok - $1 loads and resolves $_sym"
+    return 0
+  fi
+  if [ "$_rc" = 3 ]; then
+    GL_PROBE_REASON=$(printf '%s' "$_out" | head -n 1)
+    GL_REJECTED="$GL_REJECTED $1@$_sym"
+    # The first rejection is the one the on-screen message quotes: it is the
+    # candidate the search would have committed to before this check existed.
+    [ -n "$GL_FIRST_REASON" ] || GL_FIRST_REASON="$GL_PROBE_REASON"
+    echo "GL: rejecting $1 - $GL_PROBE_REASON"
+    # dlerror() names one missing dependency and stops, so fixing a firmware by
+    # that alone is one library per bug report. The audit reads DT_NEEDED out of
+    # the candidate and tries each entry, which turns the whole gap into a list
+    # this log already contains.
+    "$GAMEDIR/realracing3" --gl-probe-deps "$1" 2>&1 | sed 's/^/GL:   /'
+    return 1
+  fi
+  echo "GL: preflight could not run (exit $_rc: $_out); accepting $1 unchecked"
+  return 0
+}
+
+# Is this library glvnd's vendor-neutral dispatcher rather than a real driver?
+#
+# The unversioned libEGL.so + libGLESv2.so pair is supposed to identify a split
+# Mali wrapper set, because a *runtime* Mesa rootfs ships only the versioned
+# sonames. That is true of a console and false of any system where Mesa's -dev
+# packages are installed - the build container is one, and there the pair is
+# glvnd's, so the wrapper tier would take the case that belongs to tier 4 and
+# hand SDL a driver by a path it did not need.
+#
+# glvnd is recognisable rather than guessed at: every one of its front ends
+# links libGLdispatch.so.0, which is where the vendor is registered at runtime.
+# A vendor wrapper implements the calls itself and needs no such thing. This is
+# the same fact gl_provider_open() in thunks/khronos/gles1.cpp acts on when it
+# refuses libGLESv1_CM - a library that resolves every name and implements none
+# is worse than one that resolves nothing.
+gl_is_glvnd() {
+  "$GAMEDIR/realracing3" --gl-probe-deps "$1" 2>&1 | grep -q 'libGLdispatch'
+}
+
+# Which of the tiers above answered. It decides how the shim is built and, past
+# that, whether SDL is asked for the "mali" video backend.
+GL_TIER=""
+
 MALI_BLOB=""
+gl_try_blob() {
+  [ -e "$1" ] || return 1
+  gl_provider_loadable "$1" || return 1
+  MALI_BLOB="$1"
+  GL_TIER="blob"
+  return 0
+}
+
+# Tier 1 - the exact tested blob filenames.
 for candidate in \
   /usr/lib/arm-linux-gnueabihf/libmali-bifrost-g31-rxp0-gbm.so \
   /usr/lib/arm-linux-gnueabihf/libMali.so \
   /usr/lib/arm-linux-gnueabihf/libmali.so.1; do
-  [ -e "$candidate" ] && { MALI_BLOB="$candidate"; break; }
+  gl_try_blob "$candidate" && break
 done
-if [ -z "$MALI_BLOB" ]; then
-  for _gldir in \
-    /usr/lib/arm-linux-gnueabihf \
-    /usr/lib/arm-linux-gnueabihf/mali \
-    /usr/lib32 \
-    /lib/arm-linux-gnueabihf; do
+
+# Tier 2 - a split wrapper set. Both halves are probed for the symbol SDL will
+# actually call through them, because half a working stack renders nothing.
+#
+# A third library is looked for beside the pair: whatever in that directory
+# answers glMatrixMode. This game is pure GLES 2 - all 142 of its GL imports are
+# in the GLES2 table and not one of them is fixed function - so it is not asking
+# for fixed function on its own behalf. It is that gl_provider_open() adopts the
+# FIRST library that answers glMatrixMode and then serves 58 shared names
+# (glClear, glDrawArrays, glTexImage2D...) out of it, ahead of the GLES2 table.
+# If that library is not the same driver SDL made the context on, those 58 calls
+# run on a second dispatch layer against someone else's state - the exact split
+# portbase/AGENTS.md warns about. So: point it at the wrapper set's own driver
+# if one is there, and if none is, force single dispatch below rather than let
+# it fall through to whatever else on the system happens to export glMatrixMode.
+GL_WRAP_EGL=""
+GL_WRAP_GLES=""
+GL_WRAP_ES1=""
+if [ -z "$GL_TIER" ]; then
+  for _gldir in $GL_DIRS; do
     [ -d "$_gldir" ] || continue
-    for _cand in "$_gldir"/libmali*.so* "$_gldir"/libMali.so*; do
-      [ -e "$_cand" ] && { MALI_BLOB="$_cand"; break; }
+    [ -e "$_gldir/libEGL.so" ] && [ -e "$_gldir/libGLESv2.so" ] || continue
+    if gl_is_glvnd "$_gldir/libEGL.so"; then
+      echo "GL: $_gldir/libEGL.so is glvnd's dispatcher, not a vendor wrapper set; leaving this directory to the Mesa tier"
+      continue
+    fi
+    gl_provider_loadable "$_gldir/libEGL.so" || continue
+    gl_provider_loadable "$_gldir/libGLESv2.so" glGetString || continue
+    GL_WRAP_EGL="$_gldir/libEGL.so"
+    GL_WRAP_GLES="$_gldir/libGLESv2.so"
+    for _es1 in "$_gldir"/libGLESv1_CM.so "$_gldir"/libGLESv1_CM.so.* \
+                "$_gldir"/libmali.so "$_gldir"/libmali.so.* \
+                "$_gldir"/libMali.so*; do
+      [ -e "$_es1" ] || continue
+      # Same reason as above, one library down: adopting glvnd's GLES1 stub
+      # would fill the table with pointers that resolve and do nothing.
+      gl_is_glvnd "$_es1" && continue
+      gl_provider_loadable "$_es1" glMatrixMode || continue
+      GL_WRAP_ES1="$_es1"
+      break
+    done
+    GL_TIER="wrapper"
+    break
+  done
+fi
+
+# Tier 3 - any other Mali blob, wherever the distribution put it.
+if [ -z "$GL_TIER" ]; then
+  for _gldir in $GL_DIRS; do
+    [ -d "$_gldir" ] || continue
+    for _cand in "$_gldir"/libmali-*.so "$_gldir"/libmali.so.* \
+                 "$_gldir"/libmali.so "$_gldir"/libMali.so*; do
+      gl_try_blob "$_cand" && break
     done
     [ -n "$MALI_BLOB" ] && break
   done
 fi
 
+GL_SHIM="/tmp/realracing3-gl"
+rm -rf "$GL_SHIM"
+GL_READY=""
+GL_PROVIDER=""
 if [ -n "$MALI_BLOB" ]; then
-  GL_SHIM="/tmp/realracing3-gl"
-  rm -rf "$GL_SHIM"
   if mkdir -p "$GL_SHIM" \
      && ln -sf "$MALI_BLOB" "$GL_SHIM/libEGL.so.1" \
      && ln -sf "$MALI_BLOB" "$GL_SHIM/libGLESv1_CM.so.1" \
      && ln -sf "$MALI_BLOB" "$GL_SHIM/libGLESv2.so.2" \
      && ln -sf "$MALI_BLOB" "$GL_SHIM/libmali.so.1"; then
-    export LD_LIBRARY_PATH="$GL_SHIM:$LD_LIBRARY_PATH"
+    GL_READY="y"
+    GL_PROVIDER="$MALI_BLOB"
     echo "GL: using Mali blob $MALI_BLOB"
   else
     echo "GL: failed to create /tmp shim, using system libraries"
   fi
+elif [ "$GL_TIER" = "wrapper" ]; then
+  # SDL is told the two files by path rather than being left to resolve
+  # libEGL.so.1 / libGLESv2.so.2 itself: on the firmware this tier is for, the
+  # sonames in the library path are the ones that do not work, and the shim
+  # cannot outrank a system directory SDL dlopens by absolute name.
+  #
+  # The shim is still built, under the canonical sonames, because the loader and
+  # the game dlopen those directly - SDL_VIDEO_* only reaches SDL.
+  if mkdir -p "$GL_SHIM" \
+     && ln -sf "$GL_WRAP_EGL" "$GL_SHIM/libEGL.so.1" \
+     && ln -sf "$GL_WRAP_GLES" "$GL_SHIM/libGLESv2.so.2"; then
+    export SDL_VIDEO_EGL_DRIVER="$GL_WRAP_EGL"
+    export SDL_VIDEO_GL_DRIVER="$GL_WRAP_GLES"
+    if [ -n "$GL_WRAP_ES1" ]; then
+      ln -sf "$GL_WRAP_ES1" "$GL_SHIM/libGLESv1_CM.so.1"
+      ln -sf "$GL_WRAP_ES1" "$GL_SHIM/libmali.so.1"
+      echo "GL: GLES1-table names will come from $GL_WRAP_ES1 (the wrapper set's own driver)"
+    else
+      # Nothing beside the wrapper set answers glMatrixMode, so gl_provider_open()
+      # would keep looking and land on libGL.so.1 - which on a Batocera-derived
+      # firmware is gl4es, a whole second GL implementation. It would then serve
+      # the 58 shared names while SDL renders through the wrapper set: two
+      # dispatch layers, one context, and no error message anywhere.
+      #
+      # This variable (thunks/khronos/gles1.cpp) resolves that table through
+      # SDL_GL_GetProcAddress instead, i.e. through the same driver that owns the
+      # context. It costs this game nothing - it has no fixed-function imports
+      # for a GLES1-specific provider to serve better.
+      #
+      # LIBGL_ES is deliberately NOT set here, unlike the sibling port. That
+      # variable asks gl4es for a GLES 1.1 backend, which is right for a
+      # fixed-function game and wrong for this one: this game's context is
+      # GLES 2.0 and its shaders are GLSL ES 1.00. The fix here is to keep gl4es
+      # out of the dispatch path, not to configure it.
+      export REALRACING3_GL_SINGLE_DISPATCH=1
+      echo "GL: no driver beside the wrapper set answers glMatrixMode; resolving the GLES1 table through SDL to keep dispatch on one driver"
+    fi
+    GL_READY="y"
+    GL_PROVIDER="$GL_WRAP_EGL"
+    echo "GL: using the 32-bit wrapper set in ${GL_WRAP_EGL%/*} (EGL=$GL_WRAP_EGL GLES=$GL_WRAP_GLES)"
+  else
+    echo "GL: failed to create /tmp shim for the wrapper set, using system libraries"
+  fi
 else
-  echo "GL: no compatible 32-bit Mali blob found"
+  # No unified blob: link whatever 32-bit EGL/GLES entry points exist, each
+  # under its own name. libEGL is the one SDL cannot start without.
+  GL_EGL=""
+  mkdir -p "$GL_SHIM" 2>/dev/null
+  for _gldir in $GL_DIRS; do
+    # libEGL is what SDL cannot start without, so one directory must provide
+    # it and the GLES libraries are taken from that same directory - a set
+    # assembled from two userlands would not be one working stack.
+    [ -e "$_gldir/libEGL.so.1" ] || continue
+    gl_provider_loadable "$_gldir/libEGL.so.1" || continue
+    for _soname in libEGL.so.1 libGLESv1_CM.so.1 libGLESv2.so.2; do
+      [ -e "$_gldir/$_soname" ] && ln -sf "$_gldir/$_soname" "$GL_SHIM/$_soname"
+    done
+    [ -e "$GL_SHIM/libEGL.so.1" ] && { GL_EGL="$_gldir/libEGL.so.1"; break; }
+  done
+  if [ -n "$GL_EGL" ]; then
+    GL_READY="y"
+    GL_TIER="mesa"
+    GL_PROVIDER="$GL_EGL"
+    echo "GL: no Mali blob; using the device's 32-bit EGL/GLES set ($GL_EGL)"
+  fi
 fi
 
-# A zip extracted onto exFAT/FAT32 loses the executable bit; without this the
-# launcher would die with "Permission denied" and never reach the loader.
-$ESUDO chmod +x "$GAMEDIR/realracing3"
+if [ -n "$GL_READY" ]; then
+  export LD_LIBRARY_PATH="$GL_SHIM:$LD_LIBRARY_PATH"
+
+  # Which SDL video backend to ask for.
+  #
+  # A Batocera-derived firmware carries a vendor "mali" backend that talks to the
+  # blob directly; its kmsdrm/x11 defaults are where SDL_CreateWindow dies on
+  # those devices, and a Knulli user got this port and its two siblings running
+  # by exporting SDL_VIDEODRIVER=mali by hand. Upstream SDL has no such backend,
+  # and naming a backend SDL was not built with makes SDL_Init fail outright -
+  # which this port treats as fatal - so this is decided by asking SDL what it
+  # has, never by firmware name. On a CFW without it the list simply does not
+  # contain "mali" and the default is kept, which is why every device working
+  # today stays unchanged.
+  #
+  # The SDL being asked is the SDL the game will use: libSDL2 is deliberately not
+  # bundled (tools/collect_libs.sh leaves it to the device), so this binary and
+  # the game both link the system libSDL2-2.0.so.0. See src/sdl_info.h.
+  #
+  # Only on the two Mali tiers. On the Mesa/glvnd tier there is no Mali stack for
+  # a "mali" backend to drive.
+  if [ "$GL_TIER" = "wrapper" ] || [ "$GL_TIER" = "blob" ]; then
+    SDL_INFO=$("$GAMEDIR/realracing3" --sdl-info 2>&1)
+    printf '%s\n' "$SDL_INFO" | sed 's/^/GL: /'
+    if printf '%s\n' "$SDL_INFO" | grep -q '^sdl: video driver: mali$'; then
+      export SDL_VIDEODRIVER=mali
+      echo "GL: SDL has a 'mali' video driver and the GL stack is the device's Mali one; selecting SDL_VIDEODRIVER=mali"
+    else
+      echo "GL: SDL has no 'mali' video driver; keeping SDL default (${SDL_VIDEODRIVER:-unset})"
+    fi
+  fi
+else
+  rm -rf "$GL_SHIM"
+  echo "GL: no 32-bit GL provider found; searched: $GL_DIRS"
+  # Two different firmwares end up here and the fix is not the same, so the
+  # screen has to say which one this is. "No driver at all" is a missing
+  # package; "a driver that will not load" is a 32-bit dependency the firmware
+  # never installed next to it, and that is what a 64-bit userland hits.
+  GL_FAIL_WHAT="  This firmware ships no 32-bit Mali
+  blob and no 32-bit EGL/GLES set, so
+  the game cannot open a window."
+  if [ -n "$GL_REJECTED" ]; then
+    # The panel is 40 columns at its narrowest, so the screen carries the one
+    # word that identifies the problem - the library the driver wanted and did
+    # not find - and log.txt carries the whole dlerror() text.
+    case "$GL_FIRST_REASON" in
+      *"cannot open shared object file"*)
+        GL_FAIL_REASON="missing: ${GL_FIRST_REASON%%:*}" ;;
+      *)
+        GL_FAIL_REASON="$GL_FIRST_REASON" ;;
+    esac
+    GL_FAIL_WHAT="  A 32-bit GPU driver exists but
+  cannot be loaded - its own 32-bit
+  libraries are not installed:
+
+    ${GL_FAIL_REASON:0:34}"
+  fi
+  show_screen 14 <<EOF
+
+  Real Racing 3 - unusable GPU driver
+
+$GL_FAIL_WHAT
+
+  Not starting the game. See log.txt.
+
+EOF
+  # And stop here. Starting the loader without a GL provider only replaces this
+  # message with a black screen, which reads as a hang and buries the
+  # explanation the user had just been shown. This port would in any case die on
+  # the SDL_CreateWindow it treats as fatal. show_screen already blocked long
+  # enough to read it; return to the frontend instead.
+  echo "Not launching the game: there is no GL provider to render with"
+  pm_finish
+  exit 1
+fi
 
 # Diagnostics for the first hardware runs. This port has never executed on a
 # real device, and the emulator is known to misreport rendering: there
@@ -425,8 +807,24 @@ grep -cE "\*\*\* DROPPED" "$GAMEDIR/log.txt" 2>/dev/null \
   | awk '{ if ($1 > 0) print "WARNING: " $1 " GL call(s) were dropped - see DROPPED lines above" }'
 
 $ESUDO kill -9 "$(pidof gptokeyb)" 2>/dev/null
+
+# The case a field report would otherwise leave unanswerable: the preflight
+# accepted a provider and SDL still could not open a window. That means the
+# failure is past dlopen, somewhere in EGL bring-up, and the loader's own
+# forensics already walked SDL's default EGL library from inside the failed
+# process. Walk the provider the launcher chose too - on a Mali blob those are
+# different files, and which of the two comes up is the answer. Done after the
+# run so a healthy boot pays nothing.
+if [ -n "$GL_PROVIDER" ] && grep -q "SDL_CreateWindow failed" "$GAMEDIR/log.txt"; then
+  echo "GL: SDL could not open a window on an accepted provider; auditing $GL_PROVIDER"
+  "$GAMEDIR/realracing3" --gl-probe-init "$GL_PROVIDER" 2>&1 | sed 's/^/GL:   /'
+  "$GAMEDIR/realracing3" --gl-probe-deps "$GL_PROVIDER" 2>&1 | sed 's/^/GL:   /'
+fi
+
 rm -rf /tmp/realracing3-gl
 unset LD_LIBRARY_PATH SDL_GAMECONTROLLERCONFIG
+unset SDL_VIDEODRIVER SDL_VIDEO_EGL_DRIVER SDL_VIDEO_GL_DRIVER
+unset REALRACING3_GL_SINGLE_DISPATCH
 
 pm_finish
 exit "$GAME_RC"
