@@ -218,6 +218,17 @@ export LD_LIBRARY_PATH="$GAMEDIR/libs.armhf${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
 export SDL_GAMECONTROLLERCONFIG="${sdl_controllerconfig:-}"
 export LOADER_TRACE=1
 
+# muOS curates its SDL controller mappings so the logical buttons already
+# match the printed labels; the Nintendo-style swap that is right on the
+# ArkOS family double-swaps there (RG 40XX-H report - the "ABXY feels like
+# Xbox layout" symptom). The default follows the CFW; the variable still
+# overrides either way.
+case "$(echo "${CFW_NAME:-}" | tr 'A-Z' 'a-z')" in
+  muos) _face_default=xbox ;;
+  *)    _face_default=nintendo ;;
+esac
+export REALRACING3_FACE_LAYOUT="${REALRACING3_FACE_LAYOUT:-$_face_default}"
+
 # Audio routing is decided by what the device actually runs, never by CFW
 # name. src/main.cpp calls SDL_Init with SDL_INIT_AUDIO and treats a failure as
 # fatal, so an unroutable PCM would kill the game before the first frame. If a
