@@ -1,6 +1,6 @@
 {
   "version": 4,
-  "name": "realracing3-portmaster.zip",
+  "name": "realracing3-native-arm.zip",
   "items": [
     "Real Racing 3.sh",
     "realracing3"
@@ -13,7 +13,7 @@
     ],
     "desc": "The 2013 Firemint/Firemonkeys racing game, running its original Android ARM library directly on Linux through a bionic/JNI compatibility loader.",
     "desc_md": null,
-    "inst": "EXPERIMENTAL, NOT PLAYABLE YET: the port boots, renders the front-end with readable text and reaches the driving tutorial, but no race has been reached and it has never been run on a handheld. Supply your own Real Racing 3 2.7.0 Android install and copy the extracted tree (lib/armeabi-v7a/libRealRacing3.so plus asset_list_base.txt, assets_480x320/ and the rest of the data directories) into ports/realracing3/. That tree must include the game's own fonts: the port rasterises all text from them and ships none of its own. Keep the port release named realracing3-portmaster.zip. No game data is included.",
+    "inst": "EXPERIMENTAL, NOT PLAYABLE YET: the port boots, renders the front-end with readable text and reaches the driving tutorial, but no race has been reached and it has never been run on a handheld. Supply your own Real Racing 3 2.7.0 Android install and copy the extracted tree (lib/armeabi-v7a/libRealRacing3.so plus asset_list_base.txt, assets_480x320/ and the rest of the data directories) into ports/realracing3/. That tree must include the game's own fonts: the port rasterises all text from them and ships none of its own. Keep the port release named realracing3-native-arm.zip. No game data is included.",
     "inst_md": null,
     "genres": [
       "racing"
@@ -30,7 +30,7 @@
     ],
     "min_glibc": "2.29",
     "status": {
-      "source": "https://github.com/eaprules/realracing3-portmaster",
+      "source": "https://github.com/eaprules/realracing3-native-arm",
       "date_added": "2026-08-02"
     },
     "publisher": "Electronic Arts",
