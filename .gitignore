@@ -12,3 +12,5 @@ emulator/__pycache__/
 # qemu-user drops core files in the working directory on a guest abort.
 qemu_*.core
 __pycache__/
+
+__pycache__/

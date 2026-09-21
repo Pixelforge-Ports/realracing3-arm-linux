@@ -1,0 +1,273 @@
+{
+  "schema": 1,
+  "id": "realracing3-2.7.0",
+  "version": "1",
+  "requires_eapx": ">=0.4.0",
+  "title": "Real Racing 3",
+  "abi_order": [
+    "armeabi-v7a"
+  ],
+  "input": {
+    "search_dirs": [
+      "gamedata",
+      "."
+    ]
+  },
+  "extract": [
+    {
+      "id": "native-library",
+      "description": "Real Racing 3 2.7.0 native library, from the APK",
+      "destination": "data/lib/{abi}/libRealRacing3.so",
+      "source": {
+        "kind": "entry",
+        "patterns": [
+          "lib/{abi}/libRealRacing3.so",
+          "*/lib/{abi}/libRealRacing3.so"
+        ]
+      }
+    },
+    {
+      "id": "fmod-library",
+      "description": "FMOD Ex audio library shipped inside the same APK",
+      "destination": "data/lib/{abi}/libfmodex.so",
+      "source": {
+        "kind": "entry",
+        "patterns": [
+          "lib/{abi}/libfmodex.so",
+          "*/lib/{abi}/libfmodex.so"
+        ]
+      }
+    },
+    {
+      "id": "appdata-android-files",
+      "description": "downloaded content tree, from Android/data/com.ea.games.r3_row/files",
+      "required": false,
+      "destination": "data",
+      "source": {
+        "kind": "entries",
+        "patterns": [
+          "Android/data/com.ea.games.r3_row/files/*"
+        ],
+        "strip_prefix": "Android/data/com.ea.games.r3_row/files/"
+      }
+    },
+    {
+      "id": "appdata-data-files",
+      "description": "downloaded content tree, from data/com.ea.games.r3_row/files",
+      "required": false,
+      "destination": "data",
+      "source": {
+        "kind": "entries",
+        "patterns": [
+          "data/com.ea.games.r3_row/files/*"
+        ],
+        "strip_prefix": "data/com.ea.games.r3_row/files/"
+      }
+    },
+    {
+      "id": "appdata-package-files",
+      "description": "downloaded content tree, from com.ea.games.r3_row/files",
+      "required": false,
+      "destination": "data",
+      "source": {
+        "kind": "entries",
+        "patterns": [
+          "com.ea.games.r3_row/files/*"
+        ],
+        "strip_prefix": "com.ea.games.r3_row/files/"
+      }
+    },
+    {
+      "id": "appdata-files",
+      "description": "downloaded content tree, from a bare files/ directory",
+      "required": false,
+      "destination": "data",
+      "source": {
+        "kind": "entries",
+        "patterns": [
+          "files/*"
+        ],
+        "strip_prefix": "files/"
+      }
+    },
+    {
+      "id": "appdata-android-package",
+      "description": "downloaded content tree stored directly under the package directory",
+      "required": false,
+      "destination": "data",
+      "source": {
+        "kind": "entries",
+        "patterns": [
+          "Android/data/com.ea.games.r3_row/asset_list_*.txt",
+          "Android/data/com.ea.games.r3_row/assets_480x320/*",
+          "Android/data/com.ea.games.r3_row/assets_960x640/*",
+          "Android/data/com.ea.games.r3_row/assets_2048x1536/*",
+          "Android/data/com.ea.games.r3_row/audio/*",
+          "Android/data/com.ea.games.r3_row/Tracks/*",
+          "Android/data/com.ea.games.r3_row/vehicles/*",
+          "Android/data/com.ea.games.r3_row/gui/*"
+        ],
+        "strip_prefix": "Android/data/com.ea.games.r3_row/"
+      }
+    },
+    {
+      "id": "appdata-depot-package",
+      "description": "game data from a package folder backup, as archive.org distributes it",
+      "required": false,
+      "destination": "data",
+      "source": {
+        "kind": "entries",
+        "patterns": [
+          "com.ea.games.r3_row/.depot/*"
+        ],
+        "strip_prefix": "com.ea.games.r3_row/.depot/"
+      }
+    },
+    {
+      "id": "appdata-depot-android",
+      "description": "game data from an Android/data backup",
+      "required": false,
+      "destination": "data",
+      "source": {
+        "kind": "entries",
+        "patterns": [
+          "Android/data/com.ea.games.r3_row/.depot/*"
+        ],
+        "strip_prefix": "Android/data/com.ea.games.r3_row/.depot/"
+      }
+    },
+    {
+      "id": "appdata-depot-data",
+      "description": "game data from an extracted Android/ folder whose root strips the Android/ prefix",
+      "required": false,
+      "destination": "data",
+      "source": {
+        "kind": "entries",
+        "patterns": [
+          "data/com.ea.games.r3_row/.depot/*"
+        ],
+        "strip_prefix": "data/com.ea.games.r3_row/.depot/"
+      }
+    },
+    {
+      "id": "appdata-depot-bare",
+      "description": "game data from the depot folder on its own",
+      "required": false,
+      "destination": "data",
+      "source": {
+        "kind": "entries",
+        "patterns": [
+          ".depot/*"
+        ],
+        "strip_prefix": ".depot/"
+      }
+    }
+  ],
+  "validate": [
+    {
+      "path": "data/lib/{abi}/libRealRacing3.so",
+      "size": 11150536,
+      "sha256": [
+        "dcad5752d22ea3df0070f95930aa6edee1a2662db0363ad5338deb8f94540ab9"
+      ],
+      "elf_machine": "{abi}",
+      "critical_regions": {
+        "regions": [
+          {
+            "offset": "0x920f4c",
+            "size": 4
+          },
+          {
+            "offset": "0x322d9c",
+            "size": 16
+          },
+          {
+            "offset": "0x920f00",
+            "size": 24
+          }
+        ],
+        "sha256": "e7e4b54a015e894cfbda774e0297867b9189b551bbf27afc5ee57ef8c52de208"
+      }
+    },
+    {
+      "path": "data/lib/{abi}/libfmodex.so",
+      "size": 1045372,
+      "sha256": [
+        "9ddba4c527ef28773b371cda5b6e1ab88e2f4a2ccc17fccc77eb4d8378210aca"
+      ]
+    },
+    {
+      "path": "data",
+      "min_files": 9000,
+      "min_bytes": 2000000000
+    },
+    {
+      "path": "data/asset_list_base.txt",
+      "min_size": 100000
+    },
+    {
+      "path": "data/assets_480x320",
+      "min_files": 300,
+      "min_bytes": 12000000
+    },
+    {
+      "path": "data/audio",
+      "min_files": 300,
+      "min_bytes": 60000000
+    },
+    {
+      "path": "data/Tracks",
+      "min_files": 3000,
+      "min_bytes": 700000000
+    },
+    {
+      "path": "data/vehicles",
+      "min_files": 3000,
+      "min_bytes": 700000000
+    },
+    {
+      "path": "data/EurostileLTStd.otf",
+      "size": 27948,
+      "sha256": "078703465db819dc29d27b03cc62d1f90e2ab5e777da49eb8b17be8bdc1afbe5"
+    },
+    {
+      "path": "data/gametext.txt",
+      "min_size": 100000
+    },
+    {
+      "path": "data/joystick_config.txt",
+      "size": 5089,
+      "sha256": "f5cd3dc6d44b22e5a642d98f32923d07faee2794e7f1ff2468e03f5ab16ce984"
+    },
+    {
+      "path": "data/dataoffsets.txt",
+      "size": 1805,
+      "sha256": "ff48f1525904677522c9953b1c6c6e1f6d329a06c6d7e88a15673f479f9e89e7"
+    }
+  ],
+  "profiles": [
+    {
+      "id": "android-2.7.0-row",
+      "description": "com.ea.games.r3_row 2.7.0 APK plus its downloaded data directory",
+      "validate": [
+        {
+          "path": "data/lib/{abi}/libRealRacing3.so",
+          "sha256": "dcad5752d22ea3df0070f95930aa6edee1a2662db0363ad5338deb8f94540ab9"
+        },
+        {
+          "path": "data/lib/{abi}/libfmodex.so",
+          "sha256": "9ddba4c527ef28773b371cda5b6e1ab88e2f4a2ccc17fccc77eb4d8378210aca"
+        }
+      ]
+    }
+  ],
+  "commit": [
+    "data"
+  ],
+  "marker": ".eapx-realracing3-data.json",
+  "log": "eapx.log",
+  "placeholder": "PUT_REAL_RACING_3_DATA_HERE.txt",
+  "space": {
+    "safety_bytes": 134217728
+  }
+}

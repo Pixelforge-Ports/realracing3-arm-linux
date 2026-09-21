@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<gameList>
+	<game>
+		<path>./Real Racing 3.sh</path>
+		<name>Real Racing 3</name>
+		<desc>The 2013 racing game by Firemint/Firemonkeys. Port by EapRules: it runs the original Android ARM library directly through a bionic/JNI compatibility loader, with no emulator and no Android runtime. Bring your own Real Racing 3 2.7.0 Android install - no game data is included, and the APK alone is not enough: the ~2.6 GB of tracks, cars and audio are downloaded content and EA's server for it is gone, so a backup of the app's data folder is needed. Races on an RK3326 handheld at around 15-20 fps.</desc>
+		<image>./realracing3/cover.png</image>
+		<releasedate>20130228T000000</releasedate>
+		<developer>Firemint</developer>
+		<publisher>Electronic Arts</publisher>
+		<genre>Racing</genre>
+		<players>1</players>
+	</game>
+</gameList>

@@ -1,0 +1,21 @@
+Put your own Real Racing 3 2.7.0 (Android, armeabi-v7a) game files in this
+directory. Nothing here is game data: the port ships only the loader.
+
+Real Racing 3 PortMaster port by EapRules.
+
+The launcher refuses to start until all three of these exist:
+
+  lib/armeabi-v7a/libRealRacing3.so     (11150536 bytes in the 2.7.0 build)
+  asset_list_base.txt
+  assets_480x320/
+
+Those come from a complete 2.7.0 install, not from the APK alone. The APK
+carries the native library; the rest of the tree (asset_list_*.txt, the three
+assets_* resolution buckets, Tracks/, vehicles/, gui/, audio/, eds/, ...) is
+downloaded content and lives in the app's data directory on the phone. Copy
+the whole thing here, flat, exactly as it is laid out on the device.
+
+Roughly 3 GB. The SD card must be exFAT or ext4; FAT32 cannot hold it.
+
+Do not place the PortMaster release zip here. That zip belongs in PortMaster's
+autoinstall folder. See README.md for the complete installation instructions.

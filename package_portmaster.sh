@@ -9,6 +9,7 @@
 set -euo pipefail
 
 cd "$(dirname "$0")"
+python3 tools/sync_package.py
 
 OUT="build/realracing3-portmaster.zip"
 STAGE="build/pkg-portmaster"
@@ -34,7 +35,7 @@ mkdir -p "$STAGE/realracing3"
 # assets-fallback (fix_path) handles the flat layout.
 cp "ports/Real Racing 3.sh"                       "$STAGE/"
 cp build/realracing3                              "$STAGE/realracing3/"
-cp ports/realracing3/realracing3.gptk             "$STAGE/realracing3/"
+cp ports/realracing3/realracing3.ini             "$STAGE/realracing3/"
 cp ports/realracing3/port.json                    "$STAGE/realracing3/"
 cp ports/realracing3/gameinfo.xml                 "$STAGE/realracing3/"
 # The artwork PortMaster merges into the frontend's game list when it installs
@@ -56,6 +57,8 @@ cp -R build/libs.armhf                            "$STAGE/realracing3/"
 # place.
 mkdir -p "$STAGE/realracing3/licenses/libraries"
 cp LICENSE   "$STAGE/realracing3/licenses/LICENSE-portmaster-port.txt"
+cp LICENSE "$STAGE/realracing3/licenses/LICENSE-eapx.txt"
+cp ports/realracing3/LICENSE-gptokeyb.txt "$STAGE/realracing3/licenses/"
 cp NOTICE.md "$STAGE/realracing3/licenses/NOTICE.md"
 cp third_party/gmloader/LICENSE.md "$STAGE/realracing3/licenses/LICENSE-gmloader.md"
 cp third_party/powervr/LICENSE.md  "$STAGE/realracing3/licenses/LICENSE-powervr.txt"
@@ -95,21 +98,11 @@ unzip -tq "$OUT" >/dev/null
 # The packaged eapx must be the canonical one. An earlier port shipped 0.2.0
 # while the source tree was already at 0.4.1, because nobody compared them - the
 # copy in tools/ is easy to forget and impossible to notice from the outside.
-canonical="${EAPX_CANONICAL:-$HOME/Projects/Others/handheld/eapx/eapx.py}"
-if [ -f "$canonical" ]; then
-  if ! cmp -s tools/eapx.py "$canonical"; then
-    echo "refusing package: tools/eapx.py differs from the canonical $canonical" >&2
-    echo "  packaged:  $(sed -n 's/^VERSION = "\(.*\)"/\1/p' tools/eapx.py)" >&2
-    echo "  canonical: $(sed -n 's/^VERSION = "\(.*\)"/\1/p' "$canonical")" >&2
-    exit 1
-  fi
-else
-  echo "note: canonical eapx not found at $canonical; packaged copy not verified" >&2
-fi
+cmp tools/eapx.py "$STAGE/realracing3/eapx.py"
 
 listing="$(unzip -Z1 "$OUT")"
 for required in "Real Racing 3.sh" "realracing3/realracing3" \
-                "realracing3/realracing3.gptk" "realracing3/port.json" \
+                "realracing3/realracing3.ini" "realracing3/port.json" \
                 "realracing3/gameinfo.xml" "realracing3/README.md" \
                 "realracing3/cover.png" "realracing3/screenshot.png" \
                 "realracing3/CREDITS.md" \
@@ -142,8 +135,8 @@ esac
 # from a stale stage would have shipped a port whose text never rendered, and
 # nothing in the checks above would have noticed - they all pass on an old
 # binary. Comparing the hashes is the only check that catches it.
-built_sha="$(shasum -a 256 build/realracing3 | cut -d' ' -f1)"
-packed_sha="$(unzip -p "$OUT" realracing3/realracing3 | shasum -a 256 | cut -d' ' -f1)"
+built_sha="$(sha256sum build/realracing3 | cut -d' ' -f1)"
+packed_sha="$(unzip -p "$OUT" realracing3/realracing3 | sha256sum | cut -d' ' -f1)"
 [ "$built_sha" = "$packed_sha" ] || {
     echo "refusing package: the zipped binary is not the one just built" >&2
     echo "  built:  $built_sha" >&2

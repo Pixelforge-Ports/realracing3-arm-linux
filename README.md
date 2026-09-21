@@ -39,10 +39,8 @@ this is not one handheld's port that happens to run elsewhere:
 - **glibc** — built against an old glibc so it also runs on older firmwares.
   The build refuses to produce a binary or a bundled library that asks for
   more than the floor (`tools/check_glibc_floor.sh`).
-- **Screen** — the game's output is a fixed 640×480. The loader reads the real
-  panel size and maps onto it: `fit` (letterboxed, no distortion, the default),
-  `stretch`, or `integer`. On a 640×480 panel this is identity and costs
-  nothing.
+- **Screen**: native display size is detected automatically. `resolution.txt` selects a manual render size; `fit`, `stretch` or `integer` maps it to the panel.
+
 - **Audio** — detects a running audio server (PipeWire/PulseAudio) and routes
   through it, otherwise falls back to ALSA dmix.
 - **GPU** — finds the device's own Mali blob by pattern rather than by one
@@ -193,3 +191,36 @@ opensl: depth …/… ms … draining at N% of real time    audio pacing
 opensl: enqueued block=… nonzero=… peak=…             is there signal at all
 asset patch: N entries examined, M skipped as absent  donor completeness
 ```
+
+## Pixelforge handheld adaptation
+
+Based on the port work by [EapRules](https://github.com/EapRules/realracing3-native-arm). Adaptations by Pixelforge ports (Ronax). Original licences and credits are retained.
+
+The loader automatically detects 640x480, 720x480 (RG34XX-SP), 720x720, 1024x768, 1280x720 and other display sizes. Put `WIDTHxHEIGHT`, for example `720x480`, in `ports/realracing3/resolution.txt` to override detection; put `auto` there to restore it. Higher resolutions can reduce performance. Firmware must support ARM32 applications and matching graphics libraries.
+
+First launch uses eapx by EapRules, showing preparation stages and overall percentage in PortMaster, with console progress as a fallback. Supply the exact game version listed above. Keep the device powered on until setup completes. Native controller handling remains active; gptokeyb2 supplies the exit shortcut.
+
+These source changes need handheld verification. Upstream hardware reports describe the original port, not validation of every new resolution.
+
+## Build this adaptation in PowerShell
+
+Install Docker Desktop, select its WSL2 Linux engine, and keep it running. Open PowerShell in this repository and run:
+
+```powershell
+docker build -t realracing3-build -f Dockerfile.build .
+docker run --rm --mount "type=bind,source=$($PWD.Path),target=/src" -w /src realracing3-build bash -lc "make -j2 && make libs && bash package_portmaster.sh"
+```
+
+Output: `build/realracing3-portmaster.zip`. No purchased game data is required to build. A dated Debian snapshot keeps the old glibc build baseline available.
+
+The `package/` directory exposes metadata and images for the website. Run `python tools/sync_package.py` after changing files under `ports/`. Upload the source and package metadata at your release tag, and attach the generated ZIP to the release.
+
+## One-command Windows build
+
+With Docker Desktop running in Linux-container mode, run from this source folder:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
+```
+
+This script runs the Docker image build, compilation and packaging steps above. Add `-NoCache` to refresh the build environment. No game files are required.

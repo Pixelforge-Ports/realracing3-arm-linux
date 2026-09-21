@@ -14,6 +14,7 @@
 #include <unistd.h>
 
 #include <SDL2/SDL.h>
+#include "display_config.h"
 
 #include "platform.h"
 #include "so_util.h"
@@ -109,8 +110,8 @@ extern "C" long android_gl_draw_elements_max(void);
 
 static const char *kNativeLib = "libRealRacing3.so";
 static const char *kNativeLibDir = "lib/armeabi-v7a";
-static const int kWidth = 640;
-static const int kHeight = 480;
+static int kWidth = 640;
+static int kHeight = 480;
 static const int kLandscape = 2;
 static const int kRotation0 = 0;
 
@@ -346,7 +347,8 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
+    if (!display_config::detect("REALRACING3", kWidth, kHeight, false)) return 2;
+        SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
     SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
@@ -395,6 +397,7 @@ int main(int argc, char **argv)
     int drawable_width = 0;
     int drawable_height = 0;
     SDL_GL_GetDrawableSize(window, &drawable_width, &drawable_height);
+        if (!display_config::drawable("REALRACING3", drawable_width, drawable_height, kWidth, kHeight, false)) return 2;
     viewport_scale_init(drawable_width, drawable_height);
     /* After both GL tables are filled: the dispatch audit reads them. */
     gl_stats_init();

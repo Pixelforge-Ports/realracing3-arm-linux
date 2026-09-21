@@ -1,3 +1,4 @@
+#include <stdlib.h>
 #include <new>
 
 #include "platform.h"
@@ -142,8 +143,8 @@ static void uim_ctor(JNIEnv *, jobject self, jclass) { new (self) CCUserInterfac
 
 /* Java returns widthPixels / GetScreenScale(); this port's surface is the
  * kWidth/kHeight pair in src/main.cpp. */
-static jint uim_screen_width(JNIEnv *, jobject) { return 640; }
-static jint uim_screen_height(JNIEnv *, jobject) { return 480; }
+static jint uim_screen_width(JNIEnv *, jobject) { return getenv("REALRACING3_SCREEN_W") ? atoi(getenv("REALRACING3_SCREEN_W")) : 640; }
+static jint uim_screen_height(JNIEnv *, jobject) { return getenv("REALRACING3_SCREEN_H") ? atoi(getenv("REALRACING3_SCREEN_H")) : 480; }
 /* Java returns 2.0 only when DisplayMetrics.density > 1.0; a 640x480 panel is
  * density 1, so the engine must not be told to double its UI coordinates. */
 static jfloat uim_screen_scale(JNIEnv *, jobject) { return 1.0f; }

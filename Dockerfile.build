@@ -14,9 +14,18 @@
 # tools/check_glibc_floor.sh enforces the ceiling at build time.
 FROM debian:bullseye
 
+# Keep the Bullseye ABI while avoiding removed packages on the live mirrors.
+# HTTP bootstraps ca-certificates; APT still verifies Debian signatures/hashes.
+ARG DEBIAN_SNAPSHOT=20260830T000000Z
 RUN dpkg --add-architecture armhf && \
-    apt-get update && \
-    apt-get install -y --no-install-recommends \
+    rm -f /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources && \
+    printf '%s\n' \
+        "deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}/ bullseye main" \
+        "deb [check-valid-until=no] http://snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT}/ bullseye-security main" \
+        > /etc/apt/sources.list && \
+    rm -rf /var/lib/apt/lists/* && \
+    apt-get -o Acquire::Retries=5 -o APT::Update::Error-Mode=any update && \
+    apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
         crossbuild-essential-armhf \
         pkg-config \
         make \
@@ -24,6 +33,7 @@ RUN dpkg --add-architecture armhf && \
         python3 \
         ca-certificates \
         file \
+        zip unzip \
         libsdl2-dev:armhf \
         zlib1g-dev:armhf \
         libzip-dev:armhf \
@@ -76,3 +86,5 @@ RUN cd /tmp && tar xzf SDL2-2.0.22.tar.gz && cd SDL2-2.0.22 && \
 ENV PKG_CONFIG_PATH=/usr/lib/arm-linux-gnueabihf/pkgconfig
 ENV PKG_CONFIG_LIBDIR=/usr/lib/arm-linux-gnueabihf/pkgconfig
 WORKDIR /src
+
+ENV PKG_CONFIG=pkg-config

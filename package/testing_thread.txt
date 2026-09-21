@@ -1,0 +1,7 @@
+Real Racing 3: Pixelforge test build
+Based on EapRules' port. Supply your owned supported Android game files as described in README.md.
+Install the release ZIP through PortMaster autoinstall, then launch from Ports.
+Please test first-launch progress, subsequent launches, saves, menu pointer and all controls.
+Display checks: 640x480, 720x480, 720x720, 1024x768, 1280x720; auto and manual override.
+Firmware checks: muOS, ArkOS, ROCKNIX, Knulli. Report device, firmware, GPU driver and log.txt.
+No new handheld tests have been performed for this adaptation.
