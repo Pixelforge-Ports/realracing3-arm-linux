@@ -39,6 +39,7 @@
 #include "rr3_tutorial_trace.h"
 #include "rr3_control.h"
 #include "input_bridge.h"
+#include "cursor_draw.h"
 #include "gl_stats.h"
 #include "fb_probe.h"
 
@@ -566,12 +567,11 @@ int main(int argc, char **argv)
          * still "black". The autopilot sampler is its own kind of cheap: one
          * row, every fifteenth frame, and only under the env var.
          */
-        {
-            int fb_w = 0, fb_h = 0;
-            SDL_GL_GetDrawableSize(window, &fb_w, &fb_h);
-            android_fb_probe(frames + 1, fb_w, fb_h);
-        }
+        int fb_w = 0, fb_h = 0;
+        SDL_GL_GetDrawableSize(window, &fb_w, &fb_h);
+        android_fb_probe(frames + 1, fb_w, fb_h);
         android_input_autopilot_sample(frames + 1);
+        android_cursor_draw(fb_w, fb_h);
 
         trace("-> SDL_GL_SwapWindow #%ld", frames + 1);
         SDL_GL_SwapWindow(window);

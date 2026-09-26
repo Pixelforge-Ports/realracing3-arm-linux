@@ -49,6 +49,7 @@ SRCS := \
   src/rr3_fmod_pump.cpp \
   android/app_exit.cpp android/asset_manager.cpp android/egl_shim.cpp android/fb_probe.cpp \
   android/log.cpp android/opensles.cpp android/platform.cpp android/input_bridge.cpp \
+  android/cursor_draw.cpp \
   $(wildcard loader/*.cpp) $(wildcard thunks/libc/*.cpp) \
   $(wildcard thunks/khronos/*.cpp) jni/class_registry.cpp jni/jni.cpp \
   jni/classes/bytebuffer.cpp jni/classes/lang_ClassLoader.cpp \

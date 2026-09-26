@@ -13,6 +13,7 @@ struct so_module;
 void android_input_init(so_module *mod, _JNIEnv *env, int width, int height);
 bool android_input_event(const SDL_Event *event);
 void android_input_tick(void);
+bool android_input_mouse_mode(void);
 extern "C" void android_input_cursor_position(float *x, float *y, int *visible);
 void android_input_cursor_set(float x, float y);
 void android_input_cursor_press(bool down);

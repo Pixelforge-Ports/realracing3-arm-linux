@@ -802,10 +802,10 @@ else
 	GL_TIER="mesa"
 	GL_PROVIDER="$GL_EGL"
 
-	# Panfrost/Mesa owns the current GLES context. Do not let
-	# gles1.cpp independently select libmali.so.1. Resolve the
-	# GLES1 table through SDL_GL_GetProcAddress so all GL calls
-	# use the same Mesa/Panfrost dispatch layer.
+  # Panfrost/Mesa owns the current GLES context. Do not let
+  # gles1.cpp independently select libmali.so.1. Resolve the
+  # GLES1 table through SDL_GL_GetProcAddress so all GL calls
+  # use the same Mesa/Panfrost dispatch layer.
 	export REALRACING3_GL_SINGLE_DISPATCH=1
 	echo "GL: Mesa/Panfrost selected; forcing GLES1 table through SDL for single-driver dispatch"
 

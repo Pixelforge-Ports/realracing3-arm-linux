@@ -19,6 +19,7 @@
 
 #include "android_api.h"
 #include "app_exit.h"
+#include "input_bridge.h"
 #include "trace.h"
 
 /* Android keycodes the game cares about (from android/keycodes.h). */
@@ -300,8 +301,6 @@ static int32_t map_button(int button)
      */
     case SDL_CONTROLLER_BUTTON_START:         return AKEYCODE_MENU;
     case SDL_CONTROLLER_BUTTON_BACK:          return AKEYCODE_BUTTON_SELECT;
-    case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:  return AKEYCODE_BUTTON_L1;
-    case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER: return AKEYCODE_BUTTON_R1;
     case SDL_CONTROLLER_BUTTON_DPAD_UP:       return AKEYCODE_DPAD_UP;
     case SDL_CONTROLLER_BUTTON_DPAD_DOWN:     return AKEYCODE_DPAD_DOWN;
     case SDL_CONTROLLER_BUTTON_DPAD_LEFT:     return AKEYCODE_DPAD_LEFT;
@@ -375,8 +374,16 @@ static void fire_changed(void);
 
 static bool g_fire_button  = false;  /* A  */
 static bool g_trigger_fire = false;  /* R2 */
-static bool g_shoulder_fire = false; /* R1 */
 static int16_t g_aim_x = 0, g_aim_y = 0;
+static int16_t g_l2_value = 0, g_r2_value = 0;
+static bool g_l2_normal_down = false, g_r2_normal_down = false;
+static bool g_platform_mouse_mode = false;
+static unsigned g_aim_x_left_sources = 0, g_aim_x_right_sources = 0;
+
+enum {
+    AIM_X_SHOULDER = 1u << 0,
+    AIM_X_TRIGGER = 1u << 1,
+};
 
 /*
  * Which physical button fires.
@@ -434,7 +441,7 @@ static void update_stick(VirtualStick *st, int16_t sx, int16_t sy)
             push_joystick(g_axis[AMOTION_EVENT_AXIS_X], g_axis[AMOTION_EVENT_AXIS_Y]);
         }
 
-        if (!dead)
+        if (!dead && !android_input_mouse_mode())
             cursor_dismiss();
         return;
     }
@@ -442,13 +449,13 @@ static void update_stick(VirtualStick *st, int16_t sx, int16_t sy)
     bool active = (abs(sx) > STICK_DEADZONE || abs(sy) > STICK_DEADZONE);
 
     /* The fire button holds the aim thumb down even at rest. */
-    if (st == &g_aim && (g_fire_button || g_trigger_fire || g_shoulder_fire))
+    if (st == &g_aim && (g_fire_button || g_trigger_fire))
         active = true;
 
     /* Sticks mean "playing", and the cursor has no business being on screen
      * then: it is a touch target the game can hit. Retire it immediately
      * rather than waiting for the idle timer. */
-    if (active)
+    if (active && !android_input_mouse_mode())
         cursor_dismiss();
 
     float cx = g_width  * st->centre_x_frac;
@@ -465,6 +472,34 @@ static void update_stick(VirtualStick *st, int16_t sx, int16_t sy)
         push_motion(AMOTION_EVENT_ACTION_UP, px, py, st->pointer_id);
         st->held = false;
     }
+}
+
+static int16_t aim_x_value(void)
+{
+    bool left = g_aim_x_left_sources != 0;
+    bool right = g_aim_x_right_sources != 0;
+    if (left && right)
+        return 0;
+    if (left)
+        return -32767;
+    if (right)
+        return 32767;
+    return g_aim_x;
+}
+
+static void update_aim_stick(void)
+{
+    update_stick(&g_aim, aim_x_value(), g_aim_y);
+}
+
+static void aim_x_button(bool left, unsigned source, bool down)
+{
+    unsigned &sources = left ? g_aim_x_left_sources : g_aim_x_right_sources;
+    if (down)
+        sources |= source;
+    else
+        sources &= ~source;
+    update_aim_stick();
 }
 
 /* ------------------------------------------------------------------ *
@@ -685,14 +720,12 @@ static void synth_input_tick(void)
 }
 
 /*
- * A fire button changed. In joystick mode the game gets a gamepad key and does
- * the rest itself; in touch mode the aim thumb has to be pressed or lifted.
- * Keeping this in one place is what stops the three fire buttons from
- * disagreeing about whether the finger is down.
+ * A fire button changed. A and Normal Mode R2 share the native fire action;
+ * shoulders and Mouse Mode triggers are routed through the right stick.
  */
 static void fire_changed(void)
 {
-    bool firing = (g_fire_button || g_trigger_fire || g_shoulder_fire);
+    bool firing = (g_fire_button || g_trigger_fire);
 
     if (input_is_joystick()) {
         static bool sent = false;
@@ -705,7 +738,43 @@ static void fire_changed(void)
         return;
     }
 
-    update_stick(&g_aim, g_aim_x, g_aim_y);
+    update_aim_stick();
+}
+
+static void sync_platform_mouse_mode(void)
+{
+    bool mouse_mode = android_input_mouse_mode();
+    if (mouse_mode == g_platform_mouse_mode)
+        return;
+
+    g_platform_mouse_mode = mouse_mode;
+    if (mouse_mode) {
+        g_dpad_x = g_dpad_y = 0;
+        cursor_dismiss();
+        if (g_l2_normal_down)
+            push_key(AKEYCODE_BUTTON_L2, false);
+        g_l2_normal_down = false;
+        if (g_r2_normal_down) {
+            g_trigger_fire = false;
+            fire_changed();
+        }
+        g_r2_normal_down = false;
+        aim_x_button(true, AIM_X_TRIGGER, g_l2_value > 16000);
+        aim_x_button(false, AIM_X_TRIGGER, g_r2_value > 16000);
+    } else {
+        aim_x_button(true, AIM_X_TRIGGER, false);
+        aim_x_button(false, AIM_X_TRIGGER, false);
+        if (g_l2_value > 16000) {
+            push_key(AKEYCODE_BUTTON_L2, true);
+            g_l2_normal_down = true;
+        }
+        g_trigger_fire = g_r2_value > 12000;
+        g_r2_normal_down = g_trigger_fire;
+        fire_changed();
+        g_dpad_x = g_dpad_y = 0;
+        if (g_cursor_down || g_cursor_x >= 0.0f)
+            cursor_dismiss();
+    }
 }
 
 extern "C" bool android_platform_pump(void)
@@ -714,6 +783,7 @@ extern "C" bool android_platform_pump(void)
     bool keep_running = true;
 
     synth_input_tick();
+    sync_platform_mouse_mode();
     cursor_tick();
 
     while (SDL_PollEvent(&e)) {
@@ -734,6 +804,23 @@ extern "C" bool android_platform_pump(void)
         case SDL_CONTROLLERBUTTONUP: {
             bool down = (e.type == SDL_CONTROLLERBUTTONDOWN);
 
+            if (e.cbutton.button == SDL_CONTROLLER_BUTTON_BACK)
+                continue; /* Select is owned by the explicit mode toggle. */
+
+            if (e.cbutton.button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER) {
+                aim_x_button(true, AIM_X_SHOULDER, down);
+                continue;
+            }
+            if (e.cbutton.button == SDL_CONTROLLER_BUTTON_RIGHTSHOULDER) {
+                aim_x_button(false, AIM_X_SHOULDER, down);
+                continue;
+            }
+
+            if (g_platform_mouse_mode &&
+                (e.cbutton.button == g_fire_pad_button ||
+                 e.cbutton.button == g_cursor_pad_button))
+                continue; /* The input bridge owns Mouse Mode face buttons. */
+
             /* Which face button is which depends on the silkscreen, so these
              * two are resolved at startup and cannot be switch labels. */
             if (e.cbutton.button == g_fire_pad_button) {
@@ -742,25 +829,22 @@ extern "C" bool android_platform_pump(void)
                 continue;
             }
             if (e.cbutton.button == g_cursor_pad_button) {
-                /* Confirms in the menus and does nothing during play, so a
-                 * thumb resting on it cannot poke the screen. */
+                /* Retain the old touch cursor only if one was explicitly
+                 * opened by its legacy path. Normal Mode starts hidden. */
                 if (g_cursor_x >= 0.0f || g_cursor_down)
                     cursor_tap(down);
                 continue;
             }
 
-            /* The d-pad drives the cursor rather than reaching the game: this
-             * build has no d-pad navigation to reach. */
-            switch (e.cbutton.button) {
-            case SDL_CONTROLLER_BUTTON_DPAD_LEFT:  g_dpad_x = down ? -1 : 0; continue;
-            case SDL_CONTROLLER_BUTTON_DPAD_RIGHT: g_dpad_x = down ?  1 : 0; continue;
-            case SDL_CONTROLLER_BUTTON_DPAD_UP:    g_dpad_y = down ? -1 : 0; continue;
-            case SDL_CONTROLLER_BUTTON_DPAD_DOWN:  g_dpad_y = down ?  1 : 0; continue;
-            case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER:
-                g_shoulder_fire = down;
-                fire_changed();
-                continue;
-            default: break;
+            if (g_platform_mouse_mode) {
+                switch (e.cbutton.button) {
+                case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
+                case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
+                case SDL_CONTROLLER_BUTTON_DPAD_UP:
+                case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
+                    continue; /* The input bridge moves the game touch hand. */
+                default: break;
+                }
             }
 
             int32_t code = map_button(e.cbutton.button);
@@ -775,8 +859,9 @@ extern "C" bool android_platform_pump(void)
                 static int16_t rx = 0, ry = 0;
                 if (e.caxis.axis == SDL_CONTROLLER_AXIS_RIGHTX) rx = e.caxis.value;
                 else                                            ry = e.caxis.value;
-                update_stick(&g_aim, rx, ry);
-                g_aim_x = rx; g_aim_y = ry;
+                g_aim_x = rx;
+                g_aim_y = ry;
+                update_aim_stick();
             } else if (e.caxis.axis == SDL_CONTROLLER_AXIS_LEFTX ||
                        e.caxis.axis == SDL_CONTROLLER_AXIS_LEFTY) {
                 /* Walking. This was missing entirely: only the aiming thumb
@@ -786,20 +871,30 @@ extern "C" bool android_platform_pump(void)
                 else                                           ly = e.caxis.value;
                 update_stick(&g_move, lx, ly);
             } else if (e.caxis.axis == SDL_CONTROLLER_AXIS_TRIGGERLEFT) {
-                static bool held = false;
-                bool now = e.caxis.value > 16000;
-                if (now != held) { push_key(AKEYCODE_BUTTON_L2, now); held = now; }
+                g_l2_value = e.caxis.value;
+                sync_platform_mouse_mode();
+                if (g_platform_mouse_mode) {
+                    aim_x_button(true, AIM_X_TRIGGER, g_l2_value > 16000);
+                } else {
+                    bool now = g_l2_value > 16000;
+                    if (now != g_l2_normal_down) {
+                        push_key(AKEYCODE_BUTTON_L2, now);
+                        g_l2_normal_down = now;
+                    }
+                }
             } else if (e.caxis.axis == SDL_CONTROLLER_AXIS_TRIGGERRIGHT) {
-                /* R2 fires too. It is an analog axis, so it needs its own
-                 * threshold rather than a button event, and it shares the fire
-                 * state with A: whichever is held keeps the thumb down, and
-                 * releasing one while the other is held must not stop firing. */
-                static bool held = false;
-                bool now = e.caxis.value > 12000;
-                if (now != held) {
-                    held = now;
-                    g_trigger_fire = now;
-                    fire_changed();
+                g_r2_value = e.caxis.value;
+                sync_platform_mouse_mode();
+                if (g_platform_mouse_mode) {
+                    aim_x_button(false, AIM_X_TRIGGER, g_r2_value > 16000);
+                } else {
+                    /* In Normal Mode R2 retains its existing fire action. */
+                    bool now = g_r2_value > 12000;
+                    if (now != g_r2_normal_down) {
+                        g_r2_normal_down = now;
+                        g_trigger_fire = now;
+                        fire_changed();
+                    }
                 }
             }
             break;

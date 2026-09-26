@@ -10,9 +10,9 @@
  *
  * Digital mapping follows that reference exactly. Analog movement does not go
  * through the touchscreen at all: the sticks are delivered to the game's own
- * ControllerManager entry points. The virtual
- * touch drags remain available behind REALRACING3_STICK_TOUCH=1, and the menu
- * cursor keeps its own pointer events either way.
+ * ControllerManager entry points. The virtual touch drags remain available
+ * behind REALRACING3_STICK_TOUCH=1. Mouse Mode draws a software arrow and
+ * sends touch events only for A-button taps.
  *
  * REALRACING3_AUTOPILOT is separate from normal controls. It presses a varied
  * sequence of keys after startup and samples a framebuffer strip before each
@@ -287,6 +287,8 @@ static Uint32 g_accel_next_ms = 0;
 static const char *g_accel_name = NULL;
 static bool g_l2_down = false;
 static bool g_r2_down = false;
+static Sint16 g_l2_value = 0;
+static Sint16 g_r2_value = 0;
 
 static void start_accel_gesture(const AccelSample *samples, size_t count,
                                 const char *name)
@@ -393,9 +395,15 @@ static bool g_trigger_accel = false;
  * Defined further down, next to the descriptor string it has to carry.
  */
 static void send_trigger(bool left, Sint16 value);
+static bool mouse_mode_trigger_changed(bool left, Sint16 value);
+static void right_axis_button(bool left, unsigned source, bool down);
 
 static void trigger_changed(bool left, Sint16 value)
 {
+    (left ? g_l2_value : g_r2_value) = value;
+    if (mouse_mode_trigger_changed(left, value))
+        return;
+
     /* This binary's own path. The Android-key routing below belongs to the
      * loader's earlier donors, where a trigger had no axis to go to. */
     if (g_rr3_joystick) {
@@ -439,12 +447,10 @@ static void trigger_changed(bool left, Sint16 value)
 }
 
 /*
- * Real Racing 3's menus are touch-only. The Vita port uses the front touchscreen
- * and explicitly documents that a pad cannot navigate them. R36S has no touch
- * panel, so the d-pad drives this software cursor and physical A taps it.
- *
- * The cursor starts visible for the title/menu. Moving either analog stick
- * means gameplay and dismisses it; L3 brings it back when a menu is opened.
+ * Real Racing 3's menus are touch-only. Mouse Mode provides a software cursor
+ * for them; Normal Mode leaves every existing gamepad input on the game's
+ * original path. Select is the explicit mode toggle so analog input never
+ * changes modes behind the player's back.
  */
 /*
  * Aiming, which is a touch gesture and has no key.
@@ -519,11 +525,18 @@ static int g_aim_pending = 0;
 
 static const int kCursorPointerId = 3;
 static const float kCursorSpeed = 420.0f;
+static const Uint32 kMouseModeTimeoutMs = 15000;
 static float g_cursor_x = -1.0f, g_cursor_y = -1.0f;
 static int g_cursor_dx = 0, g_cursor_dy = 0;
+static bool g_mouse_mode = false;
 static bool g_cursor_visible = false;
 static bool g_cursor_down = false;
 static Uint32 g_cursor_last_ms = 0;
+static Uint32 g_mouse_mode_last_input_ms = 0;
+static bool g_select_down = false;
+static unsigned long g_mouse_buttons_down = 0;
+static unsigned g_right_x_left_sources = 0;
+static unsigned g_right_x_right_sources = 0;
 
 static bool g_autopilot = false;
 static long g_auto_keys = 0;
@@ -533,6 +546,7 @@ static int  g_pending_key_serial = 0;
 static int  g_counted_key_serial = 0;
 
 static void update_sticks(void);
+static Sint16 right_stick_x_value(void);
 
 /*
  * What the autopilot presses.
@@ -931,7 +945,8 @@ static void dispatch_motion(void)
 
     float lx = coord_normalize(g_lx / 32767.0f, kLeftInnerDeadzone,  kLeftOuterDeadzone);
     float ly = coord_normalize(g_ly / 32767.0f, kLeftInnerDeadzone,  kLeftOuterDeadzone);
-    float rx = coord_normalize(g_rx / 32767.0f, kRightInnerDeadzone, kRightOuterDeadzone);
+    float rx = coord_normalize(right_stick_x_value() / 32767.0f,
+                               kRightInnerDeadzone, kRightOuterDeadzone);
     float ry = coord_normalize(g_ry / 32767.0f, kRightInnerDeadzone, kRightOuterDeadzone);
 
     bool left_centred = lx == 0.0f && ly == 0.0f;
@@ -1021,47 +1036,17 @@ static void send_pointer(int raw_event, int module, int id, float x, float y)
     g_pointer(g_env, (void *)0x42424242, raw_event, module, id, x, y);
 }
 
-/*
- * Whether this port draws a menu cursor at all - REALRACING3_NO_CURSOR=1 says no.
- *
- * The cursor exists because the menus were reached by touch on a phone and this
- * console has none: the d-pad drives a painted pointer and the accept button
- * synthesises a tap under it. It is also the only thing in the port that paints
- * into the default framebuffer behind the engine's back, which is where the
- * trail on the Mali came from.
- *
- * The player reports the menus responding to the d-pad directly, which - if it
- * holds - makes the whole mechanism redundant. THAT IS NOT ESTABLISHED. The
- * loader's original donor did route face buttons through its device-specific
- * keyboard layer, so d-pad navigation is plausible; but the menu
- * widgets may equally be listening for pointer events and nothing else, in
- * which case turning the cursor off leaves the menus unnavigable. This switch
- * is here so that question gets answered on the hardware in one run instead of
- * being argued about. Unset - the default - is byte-for-byte today's behaviour.
- *
- * Gating cursor_show() is deliberately the whole implementation. Every other
- * behaviour keys off g_cursor_visible, so refusing to raise it once makes the
- * rest follow on its own: the d-pad and the accept button stop being
- * intercepted and fall through to map_button() - AKEYCODE_DPAD_* and
- * AKEYCODE_BUTTON_A to module 600, the same path the combat buttons already
- * use - android_cursor_draw() returns early because the position query reports
- * invisible, and aiming stops being suppressed. One condition, no second
- * version of the input path to keep in step with this one.
- *
- * Known cost when it is on: android_input_cursor_set() becomes a no-op, so the
- * emulator's click/move commands (emulator/send.sh) do nothing. That is a
- * development path, not a player-facing one, and the switch is for the console.
- */
+/* REALRACING3_NO_CURSOR=1 disables the software pointer and Mouse Mode's input
+ * interception, leaving controller buttons on the game's normal path. */
 static bool cursor_enabled(void)
 {
     static int enabled = -1;
     if (enabled < 0) {
         const char *v = getenv("REALRACING3_NO_CURSOR");
         enabled = (v && *v && *v != '0') ? 0 : 1;
-        trace("input: menu cursor %s%s", enabled ? "on" : "OFF",
-              enabled ? "" : " (REALRACING3_NO_CURSOR) - the d-pad and the "
-                             "accept button go straight to the game; unset it "
-                             "if the menus stop navigating");
+        trace("input: software cursor %s%s", enabled ? "on" : "OFF",
+              enabled ? "" : " (REALRACING3_NO_CURSOR) - Mouse Mode input "
+                             "falls through to the game");
     }
     return enabled != 0;
 }
@@ -1074,8 +1059,8 @@ static void cursor_show(void)
     if (!g_cursor_visible) {
         g_cursor_x = g_width * 0.5f;
         g_cursor_y = g_height * 0.5f;
-        trace("input: MODE -> menu (cursor shown at %.0f,%.0f); sticks drive the "
-          "cursor, A taps", g_cursor_x, g_cursor_y);
+        trace("input: Mouse Mode cursor shown at %.0f,%.0f",
+              g_cursor_x, g_cursor_y);
     }
     g_cursor_visible = true;
     g_cursor_last_ms = SDL_GetTicks();
@@ -1089,8 +1074,7 @@ static void cursor_hide(void)
         g_cursor_down = false;
     }
     if (g_cursor_visible)
-        trace("input: MODE -> gameplay (cursor hidden); sticks now send "
-              "touchscreen drags");
+        trace("input: Mouse Mode cursor hidden");
     g_cursor_visible = false;
     g_cursor_dx = 0;
     g_cursor_dy = 0;
@@ -1100,12 +1084,118 @@ static void cursor_tap(bool down)
 {
     if (!g_cursor_visible)
         return;
+    if (g_mouse_mode)
+        g_mouse_mode_last_input_ms = SDL_GetTicks();
+
+    if (down == g_cursor_down)
+        return;
+
     send_pointer(down ? ID_RAW_POINTER_DOWN : ID_RAW_POINTER_UP,
                  MODULE_TOUCH_SCREEN, kCursorPointerId,
                  g_cursor_x, g_cursor_y);
     g_cursor_down = down;
     trace("input: menu tap %s at %.0f,%.0f",
           down ? "down" : "up", g_cursor_x, g_cursor_y);
+}
+
+enum {
+    RIGHT_X_TRIGGER = 1u << 0,
+    RIGHT_X_SHOULDER = 1u << 1,
+};
+
+static void mouse_mode_note_input(void)
+{
+    if (g_mouse_mode)
+        g_mouse_mode_last_input_ms = SDL_GetTicks();
+}
+
+static Sint16 right_stick_x_value(void)
+{
+    bool left = g_right_x_left_sources != 0;
+    bool right = g_right_x_right_sources != 0;
+    if (left && right)
+        return 0;
+    if (left)
+        return -32767;
+    if (right)
+        return 32767;
+    return g_rx;
+}
+
+static void right_axis_button(bool left, unsigned source, bool down)
+{
+    mouse_mode_note_input();
+    unsigned &sources = left ? g_right_x_left_sources : g_right_x_right_sources;
+    bool was_down = sources != 0;
+    if (down)
+        sources |= source;
+    else
+        sources &= ~source;
+    bool is_down = sources != 0;
+    if (is_down == was_down)
+        return;
+    trace("input: right-stick horizontal emulation %s %s",
+          left ? "left" : "right", is_down ? "down" : "up");
+}
+
+static void right_axis_sources_reset(void)
+{
+    g_right_x_left_sources = 0;
+    g_right_x_right_sources = 0;
+}
+
+static bool mouse_mode_trigger_changed(bool left, Sint16 value)
+{
+    if (!g_mouse_mode)
+        return false;
+
+    if (value > 4000 ||
+        (left ? (g_right_x_left_sources & RIGHT_X_TRIGGER)
+              : (g_right_x_right_sources & RIGHT_X_TRIGGER)))
+        mouse_mode_note_input();
+    /* In Mouse Mode, triggers behave like digital horizontal stick presses. */
+    right_axis_button(left, RIGHT_X_TRIGGER, value > 16000);
+    return true;
+}
+
+static void set_mouse_mode(bool enabled)
+{
+    if (g_mouse_mode == enabled)
+        return;
+
+    if (enabled) {
+        /* Stop any trigger input from the previous Normal Mode, then move held
+         * triggers onto right-stick X for Mouse Mode. */
+        if (g_rr3_joystick) {
+            send_trigger(true, 0);
+            send_trigger(false, 0);
+        } else {
+            if (g_l2_down)
+                send_key(AKEYCODE_BUTTON_L1, false);
+            if (g_r2_down)
+                send_key(AKEYCODE_BUTTON_R1, false);
+        }
+        g_l2_down = g_r2_down = false;
+        g_mouse_mode = true;
+        g_mouse_mode_last_input_ms = SDL_GetTicks();
+        right_axis_button(true, RIGHT_X_TRIGGER, g_l2_value > 16000);
+        right_axis_button(false, RIGHT_X_TRIGGER, g_r2_value > 16000);
+        /* Drop any game-owned finger cursor; Mouse Mode draws the white arrow. */
+        if (g_rr3_touch_cancel)
+            g_rr3_touch_cancel(g_env, (void *)0x42424242);
+        cursor_show();
+    } else {
+        /* L1/R1 stay mapped in both modes; only clear the trigger sources. */
+        right_axis_button(true, RIGHT_X_TRIGGER, false);
+        right_axis_button(false, RIGHT_X_TRIGGER, false);
+        cursor_hide();
+        g_mouse_mode = false;
+        g_mouse_mode_last_input_ms = 0;
+        /* Restore normal trigger behavior at its current analog value. */
+        trigger_changed(true, g_l2_value);
+        trigger_changed(false, g_r2_value);
+    }
+    trace("input: mode -> %s", g_mouse_mode ? "Mouse" : "Normal");
 }
 
 /* Fire one tap now. enter = crosshair, !enter = left half. */
@@ -1201,6 +1291,25 @@ void android_input_tick(void)
     update_accel_gesture();
 
     Uint32 now = SDL_GetTicks();
+    if (g_mouse_mode) {
+        /* Held controls are still input even when SDL has stopped emitting
+         * axis/button change events. In particular, the right stick keeps
+         * its normal game function while Mouse Mode is active. */
+        bool input_held = g_mouse_buttons_down != 0 ||
+            g_cursor_dx != 0 || g_cursor_dy != 0 || g_cursor_down ||
+            g_right_x_left_sources != 0 || g_right_x_right_sources != 0 ||
+            abs((int)g_lx) > 4000 || abs((int)g_ly) > 4000 ||
+            abs((int)right_stick_x_value()) > 4000 || abs((int)g_ry) > 4000;
+        if (input_held) {
+            g_mouse_mode_last_input_ms = now;
+        } else if ((Uint32)(now - g_mouse_mode_last_input_ms) >=
+                   kMouseModeTimeoutMs) {
+            trace("input: Mouse Mode idle for %u ms; returning to Normal Mode",
+                  (unsigned int)kMouseModeTimeoutMs);
+            set_mouse_mode(false);
+        }
+    }
+
     if (!g_cursor_last_ms)
         g_cursor_last_ms = now;
     float dt = (now - g_cursor_last_ms) / 1000.0f;
@@ -1213,10 +1322,6 @@ void android_input_tick(void)
     g_cursor_y += g_cursor_dy * kCursorSpeed * dt;
     g_cursor_x = std::max(0.0f, std::min(g_cursor_x, (float)g_width - 1.0f));
     g_cursor_y = std::max(0.0f, std::min(g_cursor_y, (float)g_height - 1.0f));
-
-    if (g_cursor_down)
-        send_pointer(ID_RAW_POINTER_MOVE, MODULE_TOUCH_SCREEN, kCursorPointerId,
-                     g_cursor_x, g_cursor_y);
 }
 
 extern "C" void android_input_cursor_position(float *x, float *y, int *visible)
@@ -1229,15 +1334,22 @@ extern "C" void android_input_cursor_position(float *x, float *y, int *visible)
         *visible = g_cursor_visible ? 1 : 0;
 }
 
+bool android_input_mouse_mode(void)
+{
+    return g_mouse_mode;
+}
+
 void android_input_cursor_set(float x, float y)
 {
-    cursor_show();
+    set_mouse_mode(true);
+    mouse_mode_note_input();
     g_cursor_x = std::max(0.0f, std::min(x, (float)g_width - 1.0f));
     g_cursor_y = std::max(0.0f, std::min(y, (float)g_height - 1.0f));
 }
 
 void android_input_cursor_press(bool down)
 {
+    set_mouse_mode(true);
     cursor_tap(down);
 }
 
@@ -1271,8 +1383,6 @@ bool android_input_inject_control(const char *name, bool down)
     else if (!strcasecmp(name, "r1"))       button = SDL_CONTROLLER_BUTTON_RIGHTSHOULDER;
     else if (!strcasecmp(name, "start"))    button = SDL_CONTROLLER_BUTTON_START;
     else if (!strcasecmp(name, "select"))   button = SDL_CONTROLLER_BUTTON_BACK;
-    else if (!strcasecmp(name, "l3"))       button = SDL_CONTROLLER_BUTTON_LEFTSTICK;
-    else if (!strcasecmp(name, "r3"))       button = SDL_CONTROLLER_BUTTON_RIGHTSTICK;
     else if (!strcasecmp(name, "up"))       button = SDL_CONTROLLER_BUTTON_DPAD_UP;
     else if (!strcasecmp(name, "down"))     button = SDL_CONTROLLER_BUTTON_DPAD_DOWN;
     else if (!strcasecmp(name, "left"))     button = SDL_CONTROLLER_BUTTON_DPAD_LEFT;
@@ -1320,14 +1430,13 @@ static void update_sticks(void)
 
     float lx = normalise_axis(g_lx, 0.15f, 0.76f);
     float ly = normalise_axis(g_ly, 0.15f, 0.76f);
-    float rx = normalise_axis(g_rx, 0.15f, 1.00f);
+    float rx = normalise_axis(right_stick_x_value(), 0.15f, 1.00f);
     float ry = normalise_axis(g_ry, 0.15f, 1.00f);
 
-    /*
-     * Any stick deflection means gameplay, whichever path carries it: the menu
-     * cursor is driven by the d-pad and must get out of the way first.
-     */
-    if (lx != 0.0f || ly != 0.0f || rx != 0.0f || ry != 0.0f)
+    /* The right stick keeps its normal game input in Mouse Mode. Do not let
+     * that input dismiss the cursor while the player is navigating a menu. */
+    if (!g_mouse_mode &&
+        (lx != 0.0f || ly != 0.0f || rx != 0.0f || ry != 0.0f))
         cursor_hide();
 
     /*
@@ -1335,9 +1444,9 @@ static void update_sticks(void)
      * The menu cursor keeps its own pointer events (cursor_tap /
      * android_input_tick) - that path works and is untouched.
      *
-     * dispatch_motion() needs no mode check of its own: a centred stick emits
-     * nothing but its one trailing stop, so a visible menu cursor never sees a
-     * stray motion event.
+     * dispatch_motion() continues to feed the game's existing stick axes in
+     * either mode; in Mouse Mode those axes can scroll a menu while the d-pad
+     * pointer remains visible.
      *
      * g_rr3_joystick joins g_motion here because dispatch_motion() never
      * touches g_motion itself - it only runs the move/stop state machine and
@@ -1619,9 +1728,10 @@ void android_input_init(so_module *mod, JNIEnv *env, int width, int height)
           g_accept_button == SDL_CONTROLLER_BUTTON_B ? "Nintendo" : "Xbox",
           g_autopilot ? " autopilot=on" : "");
 
-    cursor_show();
-    trace("input: menus use d-pad cursor + physical A tap; L3/R3 toggle cursor; "
-          "Start restores it");
+    trace("input: starts in Normal Mode; Select toggles Mouse Mode; d-pad "
+          "moves the hand cursor in Mouse Mode; L1/R1 emulate right-stick "
+          "left/right in both modes; L2/R2 do so in Mouse Mode; 15 seconds "
+          "without input returns to Normal Mode");
     trace("input: combat keys A=%d(nav aid) B=%d(melee) X=%d(cloak) Y=%d(biotic) "
           "L1/L2=%d(cover/sniper aim) R1/R2=%d(fire); camera swipe ramp %s",
           AKEYCODE_BUTTON_A, AKEYCODE_BUTTON_B, AKEYCODE_B,
@@ -1657,7 +1767,7 @@ bool android_input_event(const SDL_Event *event)
     case SDL_CONTROLLERDEVICEADDED:
         open_controller(event->cdevice.which);
         break;
-    case SDL_CONTROLLERDEVICEREMOVED:
+    case SDL_CONTROLLERDEVICEREMOVED: {
         for (SDL_GameController *&slot : g_controllers) {
             if (!slot)
                 continue;
@@ -1667,40 +1777,54 @@ bool android_input_event(const SDL_Event *event)
                 slot = NULL;
             }
         }
+        bool any_controller = false;
+        for (SDL_GameController *controller : g_controllers)
+            any_controller = any_controller || controller != NULL;
+        g_select_down = false;
+        g_mouse_buttons_down = 0;
+        if (!any_controller) {
+            g_lx = g_ly = g_rx = g_ry = 0;
+            g_l2_value = g_r2_value = 0;
+            g_l2_down = g_r2_down = false;
+            g_cursor_dx = g_cursor_dy = 0;
+            if (g_cursor_down)
+                cursor_tap(false);
+        }
+        right_axis_sources_reset();
         break;
+    }
     case SDL_CONTROLLERBUTTONDOWN:
     case SDL_CONTROLLERBUTTONUP: {
         bool down = event->type == SDL_CONTROLLERBUTTONDOWN;
         Uint8 button = event->cbutton.button;
 
-        /* The stick-click cursor toggle only makes sense while there is a
-         * cursor to toggle. With REALRACING3_NO_CURSOR set it must not swallow
-         * the button either, or the log would report a toggle that did not
-         * happen and the button could never be mapped to anything else. */
-        if (cursor_enabled() &&
-            (button == SDL_CONTROLLER_BUTTON_LEFTSTICK ||
-             button == SDL_CONTROLLER_BUTTON_RIGHTSTICK)) {
-            if (down) {
-                if (g_cursor_visible)
-                    cursor_hide();
-                else
-                    cursor_show();
-            }
-            trace("input: controller button=%u %s -> menu cursor toggle",
-                  (unsigned int)button, down ? "down" : "up");
+        /* Select is the only mode switch. Consume both edges so it cannot also
+         * trigger the game's Select/Pause binding as a side effect. */
+        if (button == SDL_CONTROLLER_BUTTON_BACK) {
+            if (down && !g_select_down)
+                set_mouse_mode(!g_mouse_mode);
+            g_select_down = down;
             break;
         }
 
-        /*
-         * Analog movement deliberately hides the menu cursor for gameplay.
-         * Opening the pause menu is the reliable recovery path even on devices
-         * whose stick-click buttons are not exposed by their SDL mapping.
-         */
-        if (button == SDL_CONTROLLER_BUTTON_START && down &&
-            !g_cursor_visible)
-            cursor_show();
+        if (button < sizeof(g_mouse_buttons_down) * 8) {
+            unsigned long button_mask = 1ul << button;
+            if (down)
+                g_mouse_buttons_down |= button_mask;
+            else
+                g_mouse_buttons_down &= ~button_mask;
+        }
+        mouse_mode_note_input();
 
-        if (g_cursor_visible) {
+        if (button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER ||
+            button == SDL_CONTROLLER_BUTTON_RIGHTSHOULDER) {
+            right_axis_button(
+                button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER,
+                RIGHT_X_SHOULDER, down);
+            break;
+        }
+
+        if (g_mouse_mode && cursor_enabled()) {
             switch (button) {
             case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
                 g_cursor_dx = down ? -1 : (g_cursor_dx < 0 ? 0 : g_cursor_dx);
@@ -1747,10 +1871,22 @@ bool android_input_event(const SDL_Event *event)
             axis_lines++;
         }
         switch (event->caxis.axis) {
-        case SDL_CONTROLLER_AXIS_LEFTX:  g_lx = event->caxis.value; break;
-        case SDL_CONTROLLER_AXIS_LEFTY:  g_ly = event->caxis.value; break;
-        case SDL_CONTROLLER_AXIS_RIGHTX: g_rx = event->caxis.value; break;
-        case SDL_CONTROLLER_AXIS_RIGHTY: g_ry = event->caxis.value; break;
+        case SDL_CONTROLLER_AXIS_LEFTX:
+            g_lx = event->caxis.value;
+            if (abs((int)g_lx) > 4000) mouse_mode_note_input();
+            break;
+        case SDL_CONTROLLER_AXIS_LEFTY:
+            g_ly = event->caxis.value;
+            if (abs((int)g_ly) > 4000) mouse_mode_note_input();
+            break;
+        case SDL_CONTROLLER_AXIS_RIGHTX:
+            g_rx = event->caxis.value;
+            if (abs((int)g_rx) > 4000) mouse_mode_note_input();
+            break;
+        case SDL_CONTROLLER_AXIS_RIGHTY:
+            g_ry = event->caxis.value;
+            if (abs((int)g_ry) > 4000) mouse_mode_note_input();
+            break;
         case SDL_CONTROLLER_AXIS_TRIGGERLEFT:
             trigger_changed(true, event->caxis.value);
             break;
@@ -1763,6 +1899,7 @@ bool android_input_event(const SDL_Event *event)
         }
     case SDL_KEYDOWN:
     case SDL_KEYUP:
+        mouse_mode_note_input();
         if (event->key.keysym.sym == SDLK_ESCAPE)
             send_key(AKEYCODE_BACK, event->type == SDL_KEYDOWN);
         else if (event->key.keysym.sym == SDLK_RETURN)

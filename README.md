@@ -116,17 +116,25 @@ that profile with the handheld's buttons translated to the ordinals the game's
 | Control | Action |
 |---|---|
 | Left stick (left/right) | Steer |
-| R2 / L2 | Throttle / brake (analog) |
-| R1 / L1 | Throttle / brake (digital, full) |
+| R2 / L2 | Throttle / brake (analog in Normal Mode) |
+| R1 / L1 | Emulate right-stick right / left |
 | A / Y | Throttle / brake (digital, full) |
 | B | Look behind |
 | X | Change camera |
 | D-pad left / right | Steer (digital, full lock) |
-| Start or Select | Pause |
+| Start | Pause |
+| Select | Toggle Normal Mode / Mouse Mode |
 
-Throttle and brake are analog on the triggers and all-or-nothing everywhere
-else, which is how the game's own profile defines them: the shoulder and face
-bindings are the fallback for pads without analog triggers.
+Normal Mode keeps L2/R2 as analog brake/throttle. L1/R1 are remapped to the
+right stick's horizontal directions in both modes; in Mouse Mode, L2/R2 also
+emulate left/right on that axis.
+
+The port starts in **Normal Mode**. Select switches to **Mouse Mode** for
+touch-only screens and switches back when pressed again. Mouse Mode uses the
+d-pad to move the game's hand cursor, A to tap, and B for the game's back action.
+L1/R1 emulate right-stick left/right in both modes; L2/R2 do so only in Mouse
+Mode. The custom arrow overlay is disabled to leave one pointer on screen. Mouse
+Mode returns to Normal Mode after 15 seconds without input.
 
 On a first launch the port selects **Wheel B** (`Wheel_Manual`) as the control
 scheme, because it is the only one in the game's own Controls menu that steers

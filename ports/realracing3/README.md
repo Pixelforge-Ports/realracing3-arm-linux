@@ -88,50 +88,42 @@ after the first boot.
 | Left stick (left/right) | Steer |
 | R2 | Throttle (analog) |
 | L2 | Brake (analog) |
-| R1 | Throttle (digital, full) |
-| L1 | Brake (digital, full) |
+| R1 / L1 | Emulate right-stick right / left |
 | A | Throttle (digital, full) |
 | Y | Brake (digital, full) |
 | B | Look behind |
 | X | Change camera |
 | D-pad left / right | Steer (digital, full lock) |
-| Start or Select | Pause |
+| Start | Pause |
+| Select | Toggle Normal Mode / Mouse Mode |
 
 Face buttons are the ones printed on the handheld: **A** is the right button,
 **B** the bottom one, **X** the top one, **Y** the left one. The tutorial's
 prompt *"press the topmost face button to change the camera"* therefore means
 **X**, and it is correct.
 
-Throttle and brake are analog on the triggers and all-or-nothing everywhere
-else, which is how the game's own profile defines them — the shoulder and face
-bindings exist as a fallback for pads without analog triggers. Do not hold a
-trigger and its digital twin at once: the engine sums every binding of a slot,
-so it just saturates.
+Normal Mode keeps L2/R2 as analog brake/throttle. L1/R1 are remapped to the
+right stick's horizontal directions in both modes. In Mouse Mode, L2/R2 also
+emulate left/right on that axis.
 
 ### Menus
 
-Some of the game's screens are driven by the controller and some were only ever
-built for a touchscreen, so the port carries a software pointer for the second
-kind. It starts visible.
+The port starts in **Normal Mode**, which preserves the game's controller
+bindings. Press **Select** to enter Mouse Mode for touch-only screens; press it
+again to return to Normal Mode. Mouse Mode also returns to Normal Mode after
+15 seconds without input. L1/R1 use the horizontal stick mapping in both modes;
+L2/R2 use it only in Mouse Mode. The game's hand follows the cursor, with no
+extra arrow drawn over it.
 
-| Control | Action |
+| Control in Mouse Mode | Action |
 |---|---|
-| D-pad | Move the pointer |
-| A | Tap |
+| D-pad | Move the on-screen cursor |
+| A | Tap at the cursor |
 | B | Back |
-| Right stick | Scroll lists |
-| L3 / R3 | Hide or show the pointer |
-| Start | Pause, and bring the pointer back |
-
-Moving either analog stick hides the pointer automatically — that is the port
-switching to driving mode, and it is also what frees the d-pad to steer and the
-A button to be a button again. Press **Start** or click a stick to get the
-pointer back.
-
-On the screens the game does drive with a controller, the d-pad moves the
-highlight and A confirms — but only once the pointer is out of the way, since
-the pointer gets first claim on both. Hide it with L3 if a menu ignores the
-d-pad.
+| L1 / L2 | Emulate right-stick left |
+| R1 / R2 | Emulate right-stick right |
+| Right stick | Keep its normal game input, including list scrolling where supported |
+| Start | Pause |
 
 Two of these controls have been exercised end to end so far — steering on the
 left stick and the throttle on R2, both through the driving tutorial. Every
